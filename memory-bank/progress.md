@@ -6,3 +6,4 @@
 - Verified Docker Compose: v2.32.4-desktop.1.
 - Confirmed repository is already a Git worktree.
 - Completed Implementation Plan Step 2: scaffolded Go module and base layout (cmd/bot, internal/config, internal/logging, internal/store, internal/telegram, internal/domain); `go build ./...` succeeds with stub main.
+- Completed Implementation Plan Step 3: added README covering base-bot scope (no payments) and linking to design/tech docs.
