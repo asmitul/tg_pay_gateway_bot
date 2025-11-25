@@ -5,3 +5,4 @@
 - Verified Docker runtime: Docker 27.5.1, build 9f9e405.
 - Verified Docker Compose: v2.32.4-desktop.1.
 - Confirmed repository is already a Git worktree.
+- Completed Implementation Plan Step 2: scaffolded Go module and base layout (cmd/bot, internal/config, internal/logging, internal/store, internal/telegram, internal/domain); `go build ./...` succeeds with stub main.
