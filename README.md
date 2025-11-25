@@ -1,1 +1,0 @@
-# tg_pay_gateway_bot
