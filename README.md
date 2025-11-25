@@ -10,6 +10,9 @@ This iteration delivers the base bot only — no payment channels, billing flows
 - Run a Telegram client with basic command routing and registration hooks.
 - Provide minimal commands for health and onboarding; payments will be added in future phases.
 
+## Configuration
+Environment keys and defaults are defined centrally in `internal/config/config.go` (`Contract` is the authoritative list).
+
 ## Reference Docs
 - Design intent and scenarios: `memory-bank/design-document.md`
 - Technology choices: `memory-bank/tech-stack.md`
