@@ -9,5 +9,8 @@
 - `AGENTS.md`: Repository automation/agent guidelines.
 - `tmp.md`: Scratchpad file (no contract; safe to ignore for architecture).
 
+## Runtime Configuration
+- Config loader implemented (Implementation Plan Step 5): resolves APP_ENV (default production), loads .env only in development, validates required TELEGRAM_TOKEN/BOT_OWNER/MONGO_URI/MONGO_DB and parses BOT_OWNER/HTTP_PORT; defaults LOG_LEVEL and HTTP_PORT when unset.
+
 ## Database Schema
 - No collections are defined or initialized yet. Planned base collections (per implementation plan Step 11) are `users` (unique `user_id`, `role`, timestamps) and `groups` (unique `chat_id`, title, joined timestamps), but they have not been created or indexed in this iteration.

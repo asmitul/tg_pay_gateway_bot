@@ -1,4 +1,9 @@
 
+## 2025-11-26
+- Completed Implementation Plan Step 5: added config loader with APP_ENV-driven dotenv support, required key validation, and HTTP port/log level defaults.
+- Added config unit tests covering success, missing required keys, invalid BOT_OWNER/HTTP_PORT, and .env development load path; `go test ./...` passing.
+- Wired cmd/bot/main.go to fail fast on config errors and print a simple success message.
+
 ## 2025-11-25
 - Completed Implementation Plan Step 1 (runtime/tooling confirmation).
 - Verified Go toolchain version: go1.25.2 darwin/amd64.
