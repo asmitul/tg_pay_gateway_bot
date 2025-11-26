@@ -3,6 +3,7 @@ module tg_pay_gateway_bot
 go 1.25
 
 require (
+	github.com/go-telegram/bot v1.17.0
 	github.com/joho/godotenv v1.5.1
 	github.com/sirupsen/logrus v1.9.3
 	go.mongodb.org/mongo-driver v1.15.0

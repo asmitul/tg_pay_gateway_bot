@@ -1,3 +1,6 @@
+## 2025-11-27
+- Completed Implementation Plan Step 12: wired Telegram long polling via `github.com/go-telegram/bot` with allowed updates (message, edited_message, callback_query, my_chat_member, chat_member), default logging handler, and signal-driven shutdown; added unit tests for bot setup and update metadata; `go test ./...` passing.
+
 ## 2025-11-26
 - Completed Implementation Plan Step 5: added config loader with APP_ENV-driven dotenv support, required key validation, and HTTP port/log level defaults.
 - Added config unit tests covering success, missing required keys, invalid BOT_OWNER/HTTP_PORT, and .env development load path; `go test ./...` passing.

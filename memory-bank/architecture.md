@@ -19,6 +19,12 @@
 - Mongo manager added (Implementation Plan Step 10): `internal/store.Manager` establishes a single Mongo client with URI/DB from config, pings the primary on startup, and exposes helpers for `users` and `groups` collections.
 - Connection lifecycle: main uses a 10s connect timeout and 5s disconnect timeout; shutdown logs success or errors and cleans up the client.
 
+## Telegram Client Connectivity
+- Telegram wired via `github.com/go-telegram/bot` (Implementation Plan Step 12) using long polling.
+- Allowed updates subscribed by default: `message`, `edited_message`, `callback_query`, `my_chat_member`, `chat_member`.
+- Default handler logs update type, user/chat IDs, and text payloads; errors from the poller are logged through the shared logger.
+- Process uses `signal.NotifyContext` to stop polling cleanly when receiving termination signals.
+
 ## Local Development Stack
 - `docker-compose.local.yml` provides MongoDB 6.0 for development (no auth, bound to 0.0.0.0:27017) with a persistent `mongo_data` volume.
 - Default database `tg_bot_dev` is set via `MONGO_INITDB_DATABASE`; production deployments must enable credentials and use `tg_bot` (pattern `tg_bot_{APP_ENV}` is acceptable).

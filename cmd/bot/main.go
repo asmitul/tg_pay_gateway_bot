@@ -5,11 +5,14 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"tg_pay_gateway_bot/internal/config"
 	"tg_pay_gateway_bot/internal/logging"
 	"tg_pay_gateway_bot/internal/store"
+	"tg_pay_gateway_bot/internal/telegram"
 )
 
 const (
@@ -81,4 +84,18 @@ func main() {
 
 		logger.WithField("event", "mongo_disconnect").Info("mongo client disconnected")
 	}()
+
+	tgClient, err := telegram.NewClient(cfg, logger)
+	if err != nil {
+		logger.WithError(err).Error("telegram client setup error")
+		fmt.Fprintf(os.Stderr, "telegram client setup error: %v\n", err)
+		os.Exit(1)
+	}
+
+	logger.WithField("event", "telegram_ready").Info("telegram client initialized")
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	tgClient.Start(ctx)
 }
