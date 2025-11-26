@@ -1,13 +1,11 @@
-
-## 2025-11-27
-- Completed Implementation Plan Step 7: added logrus-based structured logging with env-aware formatting (JSON in production, text in development), standard fields (ts/level/msg/service/env), info/warn/error helpers, and contextual user/chat/event support with tests.
-- Wired cmd/bot startup to the logging module, keeping config-only output while logging configuration errors and startup details through the new logger; `go test ./...` passing.
-
 ## 2025-11-26
 - Completed Implementation Plan Step 5: added config loader with APP_ENV-driven dotenv support, required key validation, and HTTP port/log level defaults.
 - Added config unit tests covering success, missing required keys, invalid BOT_OWNER/HTTP_PORT, and .env development load path; `go test ./...` passing.
 - Wired cmd/bot/main.go to fail fast on config errors and print a simple success message.
 - Completed Implementation Plan Step 6: added `-config-only` dry-run flag printing a redacted config summary, plus Mongo URI validation and masking tests to fail fast on bad values.
+- Completed Implementation Plan Step 7: added logrus-based structured logging with env-aware formatting (JSON in production, text in development), standard fields (ts/level/msg/service/env), info/warn/error helpers, and contextual user/chat/event support with tests.
+- Wired cmd/bot startup to the logging module, keeping config-only output while logging configuration errors and startup details through the new logger; `go test ./...` passing.
+- Completed Implementation Plan Step 8: added `memory-bank/error-handling-guidelines.md` covering return-vs-handle rules, log level mapping, required context fields, and example classifications.
 
 ## 2025-11-25
 - Completed Implementation Plan Step 1 (runtime/tooling confirmation).

@@ -7,6 +7,7 @@
 - `progress.md`: Running log of completed steps and environment confirmations.
 - `architecture.md`: This document; captures repository structure notes and database schema status.
 - `AGENTS.md`: Repository automation/agent guidelines.
+- `error-handling-guidelines.md`: Error propagation and logging conventions (Implementation Plan Step 8).
 - `tmp.md`: Scratchpad file (no contract; safe to ignore for architecture).
 
 ## Runtime Configuration
