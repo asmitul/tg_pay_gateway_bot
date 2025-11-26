@@ -1,4 +1,5 @@
 ## 2025-11-27
+- Completed Implementation Plan Step 13: introduced a Telegram message router to classify private vs group chats, dispatch `/start` vs unknown commands, and route non-command text to a generic handler with clear routing logs; refreshed handler tests and `go test ./...` is passing.
 - Completed Implementation Plan Step 12: wired Telegram long polling via `github.com/go-telegram/bot` with allowed updates (message, edited_message, callback_query, my_chat_member, chat_member), default logging handler, and signal-driven shutdown; added unit tests for bot setup and update metadata; `go test ./...` passing.
 
 ## 2025-11-26

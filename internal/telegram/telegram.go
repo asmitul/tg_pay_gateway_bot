@@ -84,6 +84,84 @@ type updateMeta struct {
 	chatID     int64
 	text       string
 	updateType string
+	chatType   string
+}
+
+type registeredHandler struct {
+	name    string
+	handler bot.HandlerFunc
+}
+
+type messageRouter struct {
+	logger          *logrus.Entry
+	commandHandlers map[string]registeredHandler
+	unknownHandler  registeredHandler
+	genericHandler  registeredHandler
+}
+
+func newMessageRouter(logger *logrus.Entry) *messageRouter {
+	return &messageRouter{
+		logger: logger,
+		commandHandlers: map[string]registeredHandler{
+			"start": {
+				name:    "command_start",
+				handler: commandLoggerHandler(logger, "command_start"),
+			},
+		},
+		unknownHandler: registeredHandler{
+			name:    "command_unknown",
+			handler: commandLoggerHandler(logger, "command_unknown"),
+		},
+		genericHandler: registeredHandler{
+			name:    "generic_message",
+			handler: genericLoggerHandler(logger),
+		},
+	}
+}
+
+func (r *messageRouter) route(ctx context.Context, b *bot.Bot, update *models.Update, meta updateMeta) {
+	msg := primaryMessage(update)
+	if msg == nil {
+		return
+	}
+
+	normalizedChatType := normalizeChatType(meta.chatType)
+
+	if isCommand(meta.text) {
+		cmd := commandName(meta.text)
+		target, ok := r.commandHandlers[cmd]
+		if !ok {
+			target = r.unknownHandler
+		}
+
+		r.logRoute(meta, normalizedChatType, target.name, "command", cmd)
+		target.handler(ctx, b, update)
+		return
+	}
+
+	r.logRoute(meta, normalizedChatType, r.genericHandler.name, "message", "")
+	r.genericHandler.handler(ctx, b, update)
+}
+
+func (r *messageRouter) logRoute(meta updateMeta, chatType, handlerName, route, command string) {
+	fields := logging.Fields{
+		"event":     "telegram_route",
+		"handler":   handlerName,
+		"route":     route,
+		"chat_type": chatType,
+	}
+
+	if command != "" {
+		fields["command"] = command
+	}
+	if meta.userID != 0 {
+		fields["user_id"] = meta.userID
+	}
+	if meta.chatID != 0 {
+		fields["chat_id"] = meta.chatID
+	}
+
+	r.logger.WithFields(fields).Info("routed update")
 }
 
 func defaultHandler(logger *logrus.Entry) bot.HandlerFunc {
@@ -91,7 +169,9 @@ func defaultHandler(logger *logrus.Entry) bot.HandlerFunc {
 		logger = logging.Logger()
 	}
 
-	return func(ctx context.Context, _ *bot.Bot, update *models.Update) {
+	router := newMessageRouter(logger)
+
+	return func(ctx context.Context, b *bot.Bot, update *models.Update) {
 		if update == nil {
 			return
 		}
@@ -112,8 +192,13 @@ func defaultHandler(logger *logrus.Entry) bot.HandlerFunc {
 		if meta.chatID != 0 {
 			fields["chat_id"] = meta.chatID
 		}
+		if meta.chatType != "" {
+			fields["chat_type"] = normalizeChatType(meta.chatType)
+		}
 
 		logger.WithFields(fields).Info("telegram update received")
+
+		router.route(ctx, b, update, meta)
 	}
 }
 
@@ -124,6 +209,7 @@ func extractUpdateMeta(update *models.Update) updateMeta {
 			userID:     userID(update.Message.From),
 			chatID:     chatID(&update.Message.Chat),
 			text:       strings.TrimSpace(update.Message.Text),
+			chatType:   string(update.Message.Chat.Type),
 			updateType: "message",
 		}
 	case update.EditedMessage != nil:
@@ -131,6 +217,7 @@ func extractUpdateMeta(update *models.Update) updateMeta {
 			userID:     userID(update.EditedMessage.From),
 			chatID:     chatID(&update.EditedMessage.Chat),
 			text:       strings.TrimSpace(update.EditedMessage.Text),
+			chatType:   string(update.EditedMessage.Chat.Type),
 			updateType: "edited_message",
 		}
 	case update.CallbackQuery != nil:
@@ -138,18 +225,21 @@ func extractUpdateMeta(update *models.Update) updateMeta {
 			userID:     userID(&update.CallbackQuery.From),
 			chatID:     messageChatID(update.CallbackQuery.Message),
 			text:       strings.TrimSpace(update.CallbackQuery.Data),
+			chatType:   messageChatType(update.CallbackQuery.Message),
 			updateType: "callback_query",
 		}
 	case update.MyChatMember != nil:
 		return updateMeta{
 			userID:     userID(&update.MyChatMember.From),
 			chatID:     chatID(&update.MyChatMember.Chat),
+			chatType:   string(update.MyChatMember.Chat.Type),
 			updateType: "my_chat_member",
 		}
 	case update.ChatMember != nil:
 		return updateMeta{
 			userID:     userID(&update.ChatMember.From),
 			chatID:     chatID(&update.ChatMember.Chat),
+			chatType:   string(update.ChatMember.Chat.Type),
 			updateType: "chat_member",
 		}
 	default:
@@ -201,5 +291,132 @@ func messageChatID(msg models.MaybeInaccessibleMessage) int64 {
 		return chatID(&msg.InaccessibleMessage.Chat)
 	default:
 		return 0
+	}
+}
+
+func messageChatType(msg models.MaybeInaccessibleMessage) string {
+	switch msg.Type {
+	case models.MaybeInaccessibleMessageTypeMessage:
+		if msg.Message == nil {
+			return ""
+		}
+		return string(msg.Message.Chat.Type)
+	case models.MaybeInaccessibleMessageTypeInaccessibleMessage:
+		if msg.InaccessibleMessage == nil {
+			return ""
+		}
+		return string(msg.InaccessibleMessage.Chat.Type)
+	default:
+		return ""
+	}
+}
+
+func normalizeChatType(chatType string) string {
+	switch chatType {
+	case string(models.ChatTypePrivate):
+		return "private"
+	case string(models.ChatTypeGroup), string(models.ChatTypeSupergroup):
+		return "group"
+	case "":
+		return "unknown"
+	default:
+		return chatType
+	}
+}
+
+func isCommand(text string) bool {
+	return strings.HasPrefix(strings.TrimSpace(text), "/")
+}
+
+func commandName(text string) string {
+	clean := strings.TrimSpace(strings.TrimPrefix(text, "/"))
+	if clean == "" {
+		return ""
+	}
+
+	if idx := strings.Index(clean, " "); idx >= 0 {
+		clean = clean[:idx]
+	}
+	if idx := strings.Index(clean, "@"); idx >= 0 {
+		clean = clean[:idx]
+	}
+
+	return strings.ToLower(clean)
+}
+
+func primaryMessage(update *models.Update) *models.Message {
+	switch {
+	case update == nil:
+		return nil
+	case update.Message != nil:
+		return update.Message
+	case update.EditedMessage != nil:
+		return update.EditedMessage
+	default:
+		return nil
+	}
+}
+
+func commandLoggerHandler(logger *logrus.Entry, handlerName string) bot.HandlerFunc {
+	if logger == nil {
+		logger = logging.Logger()
+	}
+
+	return func(ctx context.Context, _ *bot.Bot, update *models.Update) {
+		if ctx == nil || update == nil {
+			return
+		}
+
+		meta := extractUpdateMeta(update)
+
+		fields := logging.Fields{
+			"event":     "command_handler",
+			"handler":   handlerName,
+			"chat_type": normalizeChatType(meta.chatType),
+		}
+
+		if meta.userID != 0 {
+			fields["user_id"] = meta.userID
+		}
+		if meta.chatID != 0 {
+			fields["chat_id"] = meta.chatID
+		}
+		if meta.text != "" {
+			fields["text"] = meta.text
+		}
+
+		logger.WithFields(fields).Info("handled command")
+	}
+}
+
+func genericLoggerHandler(logger *logrus.Entry) bot.HandlerFunc {
+	if logger == nil {
+		logger = logging.Logger()
+	}
+
+	return func(ctx context.Context, _ *bot.Bot, update *models.Update) {
+		if ctx == nil || update == nil {
+			return
+		}
+
+		meta := extractUpdateMeta(update)
+
+		fields := logging.Fields{
+			"event":     "generic_handler",
+			"handler":   "generic_message",
+			"chat_type": normalizeChatType(meta.chatType),
+		}
+
+		if meta.userID != 0 {
+			fields["user_id"] = meta.userID
+		}
+		if meta.chatID != 0 {
+			fields["chat_id"] = meta.chatID
+		}
+		if meta.text != "" {
+			fields["text"] = meta.text
+		}
+
+		logger.WithFields(fields).Info("handled generic message")
 	}
 }

@@ -113,22 +113,22 @@ func TestExtractUpdateMeta(t *testing.T) {
 			update: &models.Update{
 				Message: &models.Message{
 					From: &models.User{ID: 10},
-					Chat: models.Chat{ID: 20},
+					Chat: models.Chat{ID: 20, Type: models.ChatTypePrivate},
 					Text: " hello ",
 				},
 			},
-			want: updateMeta{userID: 10, chatID: 20, text: "hello", updateType: "message"},
+			want: updateMeta{userID: 10, chatID: 20, text: "hello", updateType: "message", chatType: string(models.ChatTypePrivate)},
 		},
 		{
 			name: "edited message",
 			update: &models.Update{
 				EditedMessage: &models.Message{
 					From: &models.User{ID: 11},
-					Chat: models.Chat{ID: 21},
+					Chat: models.Chat{ID: 21, Type: models.ChatTypeSupergroup},
 					Text: "updated",
 				},
 			},
-			want: updateMeta{userID: 11, chatID: 21, text: "updated", updateType: "edited_message"},
+			want: updateMeta{userID: 11, chatID: 21, text: "updated", updateType: "edited_message", chatType: string(models.ChatTypeSupergroup)},
 		},
 		{
 			name: "callback query",
@@ -139,32 +139,32 @@ func TestExtractUpdateMeta(t *testing.T) {
 					Message: models.MaybeInaccessibleMessage{
 						Type: models.MaybeInaccessibleMessageTypeMessage,
 						Message: &models.Message{
-							Chat: models.Chat{ID: 22},
+							Chat: models.Chat{ID: 22, Type: models.ChatTypeGroup},
 						},
 					},
 				},
 			},
-			want: updateMeta{userID: 12, chatID: 22, text: "choice", updateType: "callback_query"},
+			want: updateMeta{userID: 12, chatID: 22, text: "choice", updateType: "callback_query", chatType: string(models.ChatTypeGroup)},
 		},
 		{
 			name: "my chat member",
 			update: &models.Update{
 				MyChatMember: &models.ChatMemberUpdated{
 					From: models.User{ID: 13},
-					Chat: models.Chat{ID: 23},
+					Chat: models.Chat{ID: 23, Type: models.ChatTypeGroup},
 				},
 			},
-			want: updateMeta{userID: 13, chatID: 23, updateType: "my_chat_member"},
+			want: updateMeta{userID: 13, chatID: 23, updateType: "my_chat_member", chatType: string(models.ChatTypeGroup)},
 		},
 		{
 			name: "chat member",
 			update: &models.Update{
 				ChatMember: &models.ChatMemberUpdated{
 					From: models.User{ID: 14},
-					Chat: models.Chat{ID: 24},
+					Chat: models.Chat{ID: 24, Type: models.ChatTypeGroup},
 				},
 			},
-			want: updateMeta{userID: 14, chatID: 24, updateType: "chat_member"},
+			want: updateMeta{userID: 14, chatID: 24, updateType: "chat_member", chatType: string(models.ChatTypeGroup)},
 		},
 		{
 			name:   "unknown",
@@ -177,7 +177,7 @@ func TestExtractUpdateMeta(t *testing.T) {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			got := extractUpdateMeta(tt.update)
-			if got.userID != tt.want.userID || got.chatID != tt.want.chatID || got.text != tt.want.text || got.updateType != tt.want.updateType {
+			if got.userID != tt.want.userID || got.chatID != tt.want.chatID || got.text != tt.want.text || got.updateType != tt.want.updateType || got.chatType != tt.want.chatType {
 				t.Fatalf("extractUpdateMeta() = %+v, want %+v", got, tt.want)
 			}
 		})
@@ -191,28 +191,163 @@ func TestDefaultHandlerLogsUpdate(t *testing.T) {
 	update := &models.Update{
 		Message: &models.Message{
 			From: &models.User{ID: 99},
-			Chat: models.Chat{ID: 199},
+			Chat: models.Chat{ID: 199, Type: models.ChatTypePrivate},
 			Text: "ping",
 		},
 	}
 
 	handler(context.Background(), nil, update)
 
-	entry := hook.LastEntry()
-	if entry == nil {
+	var updateEntry *logrus.Entry
+	for _, entry := range hook.AllEntries() {
+		if entry.Data["event"] == "telegram_update" {
+			updateEntry = entry
+			break
+		}
+	}
+
+	if updateEntry == nil {
 		t.Fatalf("expected log entry from handler")
 	}
 
-	if entry.Data["event"] != "telegram_update" {
-		t.Fatalf("expected event=telegram_update, got %v", entry.Data["event"])
+	if updateEntry.Data["event"] != "telegram_update" {
+		t.Fatalf("expected event=telegram_update, got %v", updateEntry.Data["event"])
 	}
-	if entry.Data["user_id"] != int64(99) || entry.Data["chat_id"] != int64(199) {
-		t.Fatalf("expected user_id=99 and chat_id=199, got user_id=%v chat_id=%v", entry.Data["user_id"], entry.Data["chat_id"])
+	if updateEntry.Data["user_id"] != int64(99) || updateEntry.Data["chat_id"] != int64(199) {
+		t.Fatalf("expected user_id=99 and chat_id=199, got user_id=%v chat_id=%v", updateEntry.Data["user_id"], updateEntry.Data["chat_id"])
 	}
-	if entry.Data["text"] != "ping" {
-		t.Fatalf("expected text=ping, got %v", entry.Data["text"])
+	if updateEntry.Data["text"] != "ping" {
+		t.Fatalf("expected text=ping, got %v", updateEntry.Data["text"])
 	}
-	if entry.Data["update_type"] != "message" {
-		t.Fatalf("expected update_type=message, got %v", entry.Data["update_type"])
+	if updateEntry.Data["update_type"] != "message" {
+		t.Fatalf("expected update_type=message, got %v", updateEntry.Data["update_type"])
 	}
+	if updateEntry.Data["chat_type"] != "private" {
+		t.Fatalf("expected chat_type=private, got %v", updateEntry.Data["chat_type"])
+	}
+}
+
+func TestDefaultHandlerRoutesStartCommand(t *testing.T) {
+	hookLogger, hook := logtest.NewNullLogger()
+	handler := defaultHandler(logrus.NewEntry(hookLogger))
+
+	update := &models.Update{
+		Message: &models.Message{
+			From: &models.User{ID: 50},
+			Chat: models.Chat{ID: 150, Type: models.ChatTypePrivate},
+			Text: "/start",
+		},
+	}
+
+	handler(context.Background(), nil, update)
+
+	routeEntry := findEvent(hook.AllEntries(), "telegram_route")
+	if routeEntry == nil {
+		t.Fatalf("expected telegram_route log entry")
+	}
+
+	if routeEntry.Data["handler"] != "command_start" {
+		t.Fatalf("expected handler=command_start, got %v", routeEntry.Data["handler"])
+	}
+	if routeEntry.Data["chat_type"] != "private" {
+		t.Fatalf("expected chat_type=private, got %v", routeEntry.Data["chat_type"])
+	}
+	if routeEntry.Data["command"] != "start" {
+		t.Fatalf("expected command=start, got %v", routeEntry.Data["command"])
+	}
+
+	commandEntry := findEvent(hook.AllEntries(), "command_handler")
+	if commandEntry == nil {
+		t.Fatalf("expected command_handler log entry")
+	}
+
+	if commandEntry.Data["handler"] != "command_start" {
+		t.Fatalf("expected command handler name command_start, got %v", commandEntry.Data["handler"])
+	}
+	if commandEntry.Data["chat_type"] != "private" {
+		t.Fatalf("expected command handler chat_type=private, got %v", commandEntry.Data["chat_type"])
+	}
+}
+
+func TestDefaultHandlerRoutesUnknownCommandInGroup(t *testing.T) {
+	hookLogger, hook := logtest.NewNullLogger()
+	handler := defaultHandler(logrus.NewEntry(hookLogger))
+
+	update := &models.Update{
+		Message: &models.Message{
+			From: &models.User{ID: 51},
+			Chat: models.Chat{ID: 151, Type: models.ChatTypeGroup},
+			Text: "/unknown arg",
+		},
+	}
+
+	handler(context.Background(), nil, update)
+
+	routeEntry := findEvent(hook.AllEntries(), "telegram_route")
+	if routeEntry == nil {
+		t.Fatalf("expected telegram_route log entry")
+	}
+
+	if routeEntry.Data["handler"] != "command_unknown" {
+		t.Fatalf("expected handler=command_unknown, got %v", routeEntry.Data["handler"])
+	}
+	if routeEntry.Data["chat_type"] != "group" {
+		t.Fatalf("expected chat_type=group, got %v", routeEntry.Data["chat_type"])
+	}
+
+	commandEntry := findEvent(hook.AllEntries(), "command_handler")
+	if commandEntry == nil {
+		t.Fatalf("expected command_handler log entry")
+	}
+	if commandEntry.Data["handler"] != "command_unknown" {
+		t.Fatalf("expected command handler name command_unknown, got %v", commandEntry.Data["handler"])
+	}
+}
+
+func TestDefaultHandlerRoutesGenericMessage(t *testing.T) {
+	hookLogger, hook := logtest.NewNullLogger()
+	handler := defaultHandler(logrus.NewEntry(hookLogger))
+
+	update := &models.Update{
+		Message: &models.Message{
+			From: &models.User{ID: 52},
+			Chat: models.Chat{ID: 152, Type: models.ChatTypeSupergroup},
+			Text: "just text",
+		},
+	}
+
+	handler(context.Background(), nil, update)
+
+	routeEntry := findEvent(hook.AllEntries(), "telegram_route")
+	if routeEntry == nil {
+		t.Fatalf("expected telegram_route log entry")
+	}
+
+	if routeEntry.Data["handler"] != "generic_message" {
+		t.Fatalf("expected handler=generic_message, got %v", routeEntry.Data["handler"])
+	}
+	if routeEntry.Data["chat_type"] != "group" {
+		t.Fatalf("expected chat_type=group, got %v", routeEntry.Data["chat_type"])
+	}
+
+	genericEntry := findEvent(hook.AllEntries(), "generic_handler")
+	if genericEntry == nil {
+		t.Fatalf("expected generic_handler log entry")
+	}
+	if genericEntry.Data["handler"] != "generic_message" {
+		t.Fatalf("expected generic handler name generic_message, got %v", genericEntry.Data["handler"])
+	}
+	if genericEntry.Data["chat_type"] != "group" {
+		t.Fatalf("expected generic handler chat_type=group, got %v", genericEntry.Data["chat_type"])
+	}
+}
+
+func findEvent(entries []*logrus.Entry, event string) *logrus.Entry {
+	for _, entry := range entries {
+		if entry.Data["event"] == event {
+			return entry
+		}
+	}
+
+	return nil
 }
