@@ -7,6 +7,7 @@
 - Wired cmd/bot startup to the logging module, keeping config-only output while logging configuration errors and startup details through the new logger; `go test ./...` passing.
 - Completed Implementation Plan Step 8: added `memory-bank/error-handling-guidelines.md` covering return-vs-handle rules, log level mapping, required context fields, and example classifications.
 - Completed Implementation Plan Step 9: added `docker-compose.local.yml` for MongoDB 6.0 (dev no-auth, persistent volume, default DB `tg_bot_dev`), started the container via Docker Compose, and verified connectivity by creating a `step9_smoke` collection through `mongosh`.
+- Completed Implementation Plan Step 10: built `internal/store.Manager` to create/ping a Mongo client, expose `users`/`groups` collection helpers, and close cleanly; added faked-client unit tests and wired cmd/bot to connect/disconnect with 10s/5s timeouts. Added mongo-driver dependency via `go mod tidy`; `go test ./...` passing.
 
 ## 2025-11-25
 - Completed Implementation Plan Step 1 (runtime/tooling confirmation).

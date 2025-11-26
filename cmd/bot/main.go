@@ -1,12 +1,20 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
+	"time"
 
 	"tg_pay_gateway_bot/internal/config"
 	"tg_pay_gateway_bot/internal/logging"
+	"tg_pay_gateway_bot/internal/store"
+)
+
+const (
+	mongoConnectTimeout    = 10 * time.Second
+	mongoDisconnectTimeout = 5 * time.Second
 )
 
 func main() {
@@ -38,4 +46,27 @@ func main() {
 		"event":    "startup",
 		"mongo_db": cfg.MongoDB,
 	}).Info("configuration loaded")
+
+	connectCtx, cancel := context.WithTimeout(context.Background(), mongoConnectTimeout)
+	mongoManager, err := store.NewManager(connectCtx, cfg)
+	cancel()
+	if err != nil {
+		logger.WithError(err).Error("mongo connection error")
+		fmt.Fprintf(os.Stderr, "mongo connection error: %v\n", err)
+		os.Exit(1)
+	}
+
+	logger.WithField("event", "mongo_connect").Info("connected to mongo")
+
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), mongoDisconnectTimeout)
+		defer cancel()
+
+		if err := mongoManager.Close(shutdownCtx); err != nil {
+			logger.WithError(err).Error("mongo disconnect error")
+			return
+		}
+
+		logger.WithField("event", "mongo_disconnect").Info("mongo client disconnected")
+	}()
 }
