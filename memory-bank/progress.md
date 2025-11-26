@@ -1,4 +1,8 @@
 
+## 2025-11-27
+- Completed Implementation Plan Step 7: added logrus-based structured logging with env-aware formatting (JSON in production, text in development), standard fields (ts/level/msg/service/env), info/warn/error helpers, and contextual user/chat/event support with tests.
+- Wired cmd/bot startup to the logging module, keeping config-only output while logging configuration errors and startup details through the new logger; `go test ./...` passing.
+
 ## 2025-11-26
 - Completed Implementation Plan Step 5: added config loader with APP_ENV-driven dotenv support, required key validation, and HTTP port/log level defaults.
 - Added config unit tests covering success, missing required keys, invalid BOT_OWNER/HTTP_PORT, and .env development load path; `go test ./...` passing.

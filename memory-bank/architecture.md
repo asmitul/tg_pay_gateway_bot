@@ -12,6 +12,7 @@
 ## Runtime Configuration
 - Config loader implemented (Implementation Plan Step 5): resolves APP_ENV (default production), loads .env only in development, validates required TELEGRAM_TOKEN/BOT_OWNER/MONGO_URI/MONGO_DB and parses BOT_OWNER/HTTP_PORT; defaults LOG_LEVEL and HTTP_PORT when unset.
 - Configuration dry-run supported via `-config-only` flag: loads config, validates Mongo URI scheme/host, prints a redacted summary (hiding token/credentials), then exits without starting the bot.
+- Structured logging initialized (Implementation Plan Step 7): global logrus logger with JSON format in production and text in development, default fields `service=telegram-bot` and `env`, key names `ts/level/msg`, and helpers for info/warn/error plus contextual `user_id/chat_id/event` fields.
 
 ## Database Schema
 - No collections are defined or initialized yet. Planned base collections (per implementation plan Step 11) are `users` (unique `user_id`, `role`, timestamps) and `groups` (unique `chat_id`, title, joined timestamps), but they have not been created or indexed in this iteration.
