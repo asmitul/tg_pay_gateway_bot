@@ -43,6 +43,9 @@ func (r *UserRepository) Create(ctx context.Context, user User) (User, error) {
 	}
 
 	now := time.Now().UTC().Truncate(time.Millisecond)
+	if user.LastSeenAt.IsZero() {
+		user.LastSeenAt = now
+	}
 	if user.CreatedAt.IsZero() {
 		user.CreatedAt = now
 	}

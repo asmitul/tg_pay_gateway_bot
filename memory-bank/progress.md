@@ -1,4 +1,5 @@
 ## 2025-11-26
+- Completed Implementation Plan Step 16: added user registrar that upserts new users with default `role=user`, tracks `last_seen_at`/`updated_at` on every update, wired Telegram default handler to invoke it for all updates with `user_id`, and extended the user domain model to persist `last_seen_at`; `go test ./...` passing.
 - Completed Implementation Plan Step 15: added domain models for users/groups with role priority mapping, repositories to insert/fetch records with joined/last seen timestamps, and unit tests using Mongo fakes to store/retrieve sample records; `go test ./...` passing.
 - Completed Implementation Plan Step 5: added config loader with APP_ENV-driven dotenv support, required key validation, and HTTP port/log level defaults.
 - Added config unit tests covering success, missing required keys, invalid BOT_OWNER/HTTP_PORT, and .env development load path; `go test ./...` passing.

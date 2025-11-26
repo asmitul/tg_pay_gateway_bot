@@ -20,7 +20,7 @@
 - Connection lifecycle: main uses a 10s connect timeout and 5s disconnect timeout; shutdown logs success or errors and cleans up the client.
 
 ## Domain Models
-- Users are represented by `domain.User` with `user_id`, `role` (owner/admin/user), and timestamps `created_at`/`updated_at`. Role priority helper maps owner=3, admin=2, user=1 for access decisions.
+- Users are represented by `domain.User` with `user_id`, `role` (owner/admin/user), timestamps `created_at`/`updated_at`, and `last_seen_at` (touched on every update). Role priority helper maps owner=3, admin=2, user=1 for access decisions.
 - Groups are represented by `domain.Group` with `chat_id`, `title`, `joined_at`, and `last_seen_at` (defaults to `joined_at` when not pre-populated).
 
 ## Owner Bootstrap
@@ -30,8 +30,12 @@
 ## Telegram Client Connectivity
 - Telegram wired via `github.com/go-telegram/bot` (Implementation Plan Step 12) using long polling.
 - Allowed updates subscribed by default: `message`, `edited_message`, `callback_query`, `my_chat_member`, `chat_member`.
-- Default handler logs update type, user/chat IDs, and text payloads; errors from the poller are logged through the shared logger.
+- Default handler logs update type, user/chat IDs, and text payloads; errors from the poller are logged through the shared logger. User registration runs before routing to ensure user presence/last seen tracking.
 - Process uses `signal.NotifyContext` to stop polling cleanly when receiving termination signals.
+
+## User Registration
+- `internal/feature/user.Registrar` upserts users on first contact with `role=user`, populating `created_at`/`updated_at`/`last_seen_at`, and refreshes `updated_at`/`last_seen_at` on every subsequent update.
+- The Telegram default handler invokes the registrar for any update carrying a `user_id` before routing; failures log `event=user_registration_failed` with chat/user context while routing continues.
 
 ## Local Development Stack
 - `docker-compose.local.yml` provides MongoDB 6.0 for development (no auth, bound to 0.0.0.0:27017) with a persistent `mongo_data` volume.
@@ -39,6 +43,6 @@
 
 ## Database Schema
 - Base collections created for the bot skeleton:
-  - `users`: fields `user_id` (unique), `role`, `created_at`, `updated_at`.
+  - `users`: fields `user_id` (unique), `role`, `created_at`, `updated_at`, `last_seen_at` (updated for each user interaction).
   - `groups`: fields `chat_id` (unique), `title`, `joined_at`, `last_seen_at` (set to `joined_at` on insert).
 - Unique indexes are ensured at startup via `store.Manager.EnsureBaseIndexes`: `users.user_id` (`user_id_unique`) and `groups.chat_id` (`chat_id_unique`).

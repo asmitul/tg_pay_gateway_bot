@@ -30,11 +30,11 @@ func TestUserRepositoryCreateAndGet(t *testing.T) {
 	if created.Role != RoleAdmin {
 		t.Fatalf("expected role %s, got %s", RoleAdmin, created.Role)
 	}
-	if created.CreatedAt.IsZero() || created.UpdatedAt.IsZero() {
-		t.Fatalf("expected timestamps to be set, got created_at=%v updated_at=%v", created.CreatedAt, created.UpdatedAt)
+	if created.CreatedAt.IsZero() || created.UpdatedAt.IsZero() || created.LastSeenAt.IsZero() {
+		t.Fatalf("expected timestamps to be set, got created_at=%v updated_at=%v last_seen_at=%v", created.CreatedAt, created.UpdatedAt, created.LastSeenAt)
 	}
-	if !created.CreatedAt.Equal(created.UpdatedAt) {
-		t.Fatalf("expected created_at and updated_at to match on insert, got %v and %v", created.CreatedAt, created.UpdatedAt)
+	if !created.CreatedAt.Equal(created.UpdatedAt) || !created.CreatedAt.Equal(created.LastSeenAt) {
+		t.Fatalf("expected timestamps to match on insert, got created_at=%v updated_at=%v last_seen_at=%v", created.CreatedAt, created.UpdatedAt, created.LastSeenAt)
 	}
 
 	doc := coll.docFor(t, "user_id", input.UserID)
@@ -42,6 +42,7 @@ func TestUserRepositoryCreateAndGet(t *testing.T) {
 	assertStringField(t, doc, "role", RoleAdmin)
 	assertTimeFieldSet(t, doc, "created_at")
 	assertTimeFieldSet(t, doc, "updated_at")
+	assertTimeFieldSet(t, doc, "last_seen_at")
 
 	found, err := repo.GetByID(ctx, input.UserID)
 	if err != nil {
@@ -59,6 +60,9 @@ func TestUserRepositoryCreateAndGet(t *testing.T) {
 	}
 	if !found.UpdatedAt.Equal(created.UpdatedAt) {
 		t.Fatalf("expected updated_at %v, got %v", created.UpdatedAt, found.UpdatedAt)
+	}
+	if !found.LastSeenAt.Equal(created.LastSeenAt) {
+		t.Fatalf("expected last_seen_at %v, got %v", created.LastSeenAt, found.LastSeenAt)
 	}
 }
 

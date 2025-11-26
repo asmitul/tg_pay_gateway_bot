@@ -186,7 +186,7 @@ func TestExtractUpdateMeta(t *testing.T) {
 
 func TestDefaultHandlerLogsUpdate(t *testing.T) {
 	hookLogger, hook := logtest.NewNullLogger()
-	handler := defaultHandler(logrus.NewEntry(hookLogger))
+	handler := defaultHandler(logrus.NewEntry(hookLogger), nil)
 
 	update := &models.Update{
 		Message: &models.Message{
@@ -227,9 +227,60 @@ func TestDefaultHandlerLogsUpdate(t *testing.T) {
 	}
 }
 
+func TestDefaultHandlerRegistersUser(t *testing.T) {
+	hookLogger, hook := logtest.NewNullLogger()
+	registrar := &stubRegistrar{}
+	handler := defaultHandler(logrus.NewEntry(hookLogger), registrar)
+
+	update := &models.Update{
+		Message: &models.Message{
+			From: &models.User{ID: 66},
+			Chat: models.Chat{ID: 166, Type: models.ChatTypePrivate},
+			Text: "ping",
+		},
+	}
+
+	handler(nil, nil, update)
+
+	if len(registrar.calls) != 1 || registrar.calls[0] != 66 {
+		t.Fatalf("expected registrar to be called with user_id=66, got %v", registrar.calls)
+	}
+
+	if findEvent(hook.AllEntries(), "telegram_update") == nil {
+		t.Fatalf("expected telegram_update log entry")
+	}
+}
+
+func TestDefaultHandlerLogsRegistrationErrors(t *testing.T) {
+	hookLogger, hook := logtest.NewNullLogger()
+	registrar := &stubRegistrar{err: errors.New("boom")}
+	handler := defaultHandler(logrus.NewEntry(hookLogger), registrar)
+
+	update := &models.Update{
+		Message: &models.Message{
+			From: &models.User{ID: 77},
+			Chat: models.Chat{ID: 177, Type: models.ChatTypePrivate},
+			Text: "hello",
+		},
+	}
+
+	handler(context.Background(), nil, update)
+
+	entry := findEvent(hook.AllEntries(), "user_registration_failed")
+	if entry == nil {
+		t.Fatalf("expected user_registration_failed log entry")
+	}
+	if entry.Data["user_id"] != int64(77) {
+		t.Fatalf("expected user_id=77 in failure log, got %v", entry.Data["user_id"])
+	}
+	if entry.Data["chat_id"] != int64(177) {
+		t.Fatalf("expected chat_id=177 in failure log, got %v", entry.Data["chat_id"])
+	}
+}
+
 func TestDefaultHandlerRoutesStartCommand(t *testing.T) {
 	hookLogger, hook := logtest.NewNullLogger()
-	handler := defaultHandler(logrus.NewEntry(hookLogger))
+	handler := defaultHandler(logrus.NewEntry(hookLogger), nil)
 
 	update := &models.Update{
 		Message: &models.Message{
@@ -271,7 +322,7 @@ func TestDefaultHandlerRoutesStartCommand(t *testing.T) {
 
 func TestDefaultHandlerRoutesUnknownCommandInGroup(t *testing.T) {
 	hookLogger, hook := logtest.NewNullLogger()
-	handler := defaultHandler(logrus.NewEntry(hookLogger))
+	handler := defaultHandler(logrus.NewEntry(hookLogger), nil)
 
 	update := &models.Update{
 		Message: &models.Message{
@@ -306,7 +357,7 @@ func TestDefaultHandlerRoutesUnknownCommandInGroup(t *testing.T) {
 
 func TestDefaultHandlerRoutesGenericMessage(t *testing.T) {
 	hookLogger, hook := logtest.NewNullLogger()
-	handler := defaultHandler(logrus.NewEntry(hookLogger))
+	handler := defaultHandler(logrus.NewEntry(hookLogger), nil)
 
 	update := &models.Update{
 		Message: &models.Message{
@@ -340,6 +391,16 @@ func TestDefaultHandlerRoutesGenericMessage(t *testing.T) {
 	if genericEntry.Data["chat_type"] != "group" {
 		t.Fatalf("expected generic handler chat_type=group, got %v", genericEntry.Data["chat_type"])
 	}
+}
+
+type stubRegistrar struct {
+	calls []int64
+	err   error
+}
+
+func (s *stubRegistrar) EnsureUser(_ context.Context, userID int64) (bool, error) {
+	s.calls = append(s.calls, userID)
+	return false, s.err
 }
 
 func findEvent(entries []*logrus.Entry, event string) *logrus.Entry {

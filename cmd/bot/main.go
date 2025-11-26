@@ -11,6 +11,7 @@ import (
 
 	"tg_pay_gateway_bot/internal/config"
 	"tg_pay_gateway_bot/internal/feature/owner"
+	"tg_pay_gateway_bot/internal/feature/user"
 	"tg_pay_gateway_bot/internal/logging"
 	"tg_pay_gateway_bot/internal/store"
 	"tg_pay_gateway_bot/internal/telegram"
@@ -85,6 +86,8 @@ func main() {
 	}
 	cancelOwner()
 
+	userRegistrar := user.NewRegistrar(mongoManager.Users(), logger)
+
 	defer func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), mongoDisconnectTimeout)
 		defer cancel()
@@ -97,7 +100,7 @@ func main() {
 		logger.WithField("event", "mongo_disconnect").Info("mongo client disconnected")
 	}()
 
-	tgClient, err := telegram.NewClient(cfg, logger)
+	tgClient, err := telegram.NewClient(cfg, logger, telegram.WithUserRegistrar(userRegistrar))
 	if err != nil {
 		logger.WithError(err).Error("telegram client setup error")
 		fmt.Fprintf(os.Stderr, "telegram client setup error: %v\n", err)

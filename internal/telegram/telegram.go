@@ -33,6 +33,25 @@ var (
 	}
 )
 
+// UserRegistrar ensures users are persisted and tracked when updates arrive.
+type UserRegistrar interface {
+	EnsureUser(ctx context.Context, userID int64) (bool, error)
+}
+
+type clientOptions struct {
+	userRegistrar UserRegistrar
+}
+
+// ClientOption configures optional Telegram client dependencies.
+type ClientOption func(*clientOptions)
+
+// WithUserRegistrar wires a user registration hook that runs on every update.
+func WithUserRegistrar(registrar UserRegistrar) ClientOption {
+	return func(opts *clientOptions) {
+		opts.userRegistrar = registrar
+	}
+}
+
 // Client wraps the Telegram bot instance and logging dependencies.
 type Client struct {
 	bot    botRunner
@@ -40,7 +59,7 @@ type Client struct {
 }
 
 // NewClient initializes the Telegram bot with long polling and default handlers.
-func NewClient(cfg config.Config, logger *logrus.Entry) (*Client, error) {
+func NewClient(cfg config.Config, logger *logrus.Entry, opts ...ClientOption) (*Client, error) {
 	if strings.TrimSpace(cfg.TelegramToken) == "" {
 		return nil, errors.New("telegram token is required")
 	}
@@ -48,9 +67,16 @@ func NewClient(cfg config.Config, logger *logrus.Entry) (*Client, error) {
 		logger = logging.Logger()
 	}
 
+	clientOpts := clientOptions{}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&clientOpts)
+		}
+	}
+
 	tgBot, err := createBot(cfg.TelegramToken,
 		bot.WithAllowedUpdates(defaultAllowedUpdates),
-		bot.WithDefaultHandler(defaultHandler(logger)),
+		bot.WithDefaultHandler(defaultHandler(logger, clientOpts.userRegistrar)),
 		bot.WithErrorsHandler(errorHandler(logger)),
 	)
 	if err != nil {
@@ -164,7 +190,7 @@ func (r *messageRouter) logRoute(meta updateMeta, chatType, handlerName, route, 
 	r.logger.WithFields(fields).Info("routed update")
 }
 
-func defaultHandler(logger *logrus.Entry) bot.HandlerFunc {
+func defaultHandler(logger *logrus.Entry, registrar UserRegistrar) bot.HandlerFunc {
 	if logger == nil {
 		logger = logging.Logger()
 	}
@@ -176,7 +202,21 @@ func defaultHandler(logger *logrus.Entry) bot.HandlerFunc {
 			return
 		}
 
+		if ctx == nil {
+			ctx = context.Background()
+		}
+
 		meta := extractUpdateMeta(update)
+
+		if registrar != nil && meta.userID != 0 {
+			if _, err := registrar.EnsureUser(ctx, meta.userID); err != nil {
+				logger.WithFields(logging.Fields{
+					"event":   "user_registration_failed",
+					"user_id": meta.userID,
+					"chat_id": meta.chatID,
+				}).WithError(err).Error("failed to ensure user registration")
+			}
+		}
 
 		fields := logging.Fields{
 			"event":       "telegram_update",
