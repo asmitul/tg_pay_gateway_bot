@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.mongodb.org/mongo-driver/mongo/readpref"
@@ -111,6 +112,85 @@ func TestManagerCloseRequiresContext(t *testing.T) {
 	}
 }
 
+func TestEnsureBaseIndexesCreatesUniqueIndexes(t *testing.T) {
+	fake := newFakeMongoClient(t)
+	restoreConnect := stubConnect(fake, nil)
+	t.Cleanup(restoreConnect)
+
+	manager, err := NewManager(context.Background(), config.Config{MongoURI: "mongodb://stub", MongoDB: "tg_bot_test"})
+	if err != nil {
+		t.Fatalf("expected manager to initialize, got error: %v", err)
+	}
+
+	recorder := newIndexRecorder(t, "")
+	restoreIndexes := recorder.stub()
+	t.Cleanup(restoreIndexes)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	if err := manager.EnsureBaseIndexes(ctx); err != nil {
+		t.Fatalf("expected indexes to be created, got error: %v", err)
+	}
+
+	if len(recorder.calls) != 2 {
+		t.Fatalf("expected 2 index creation calls, got %d", len(recorder.calls))
+	}
+
+	userCall := recorder.calls[0]
+	if userCall.collection != CollectionUsers {
+		t.Fatalf("expected first collection %s, got %s", CollectionUsers, userCall.collection)
+	}
+	assertUniqueIndex(t, userCall.models, "user_id", "user_id_unique")
+
+	groupCall := recorder.calls[1]
+	if groupCall.collection != CollectionGroups {
+		t.Fatalf("expected second collection %s, got %s", CollectionGroups, groupCall.collection)
+	}
+	assertUniqueIndex(t, groupCall.models, "chat_id", "chat_id_unique")
+}
+
+func TestEnsureBaseIndexesFailsFastOnErrors(t *testing.T) {
+	fake := newFakeMongoClient(t)
+	restoreConnect := stubConnect(fake, nil)
+	t.Cleanup(restoreConnect)
+
+	manager, err := NewManager(context.Background(), config.Config{MongoURI: "mongodb://stub", MongoDB: "tg_bot_test"})
+	if err != nil {
+		t.Fatalf("expected manager to initialize, got error: %v", err)
+	}
+
+	recorder := newIndexRecorder(t, CollectionUsers)
+	restoreIndexes := recorder.stub()
+	t.Cleanup(restoreIndexes)
+
+	err = manager.EnsureBaseIndexes(context.Background())
+	if err == nil {
+		t.Fatalf("expected error from index creation")
+	}
+	if len(recorder.calls) != 1 {
+		t.Fatalf("expected to stop after first failure, got %d calls", len(recorder.calls))
+	}
+	if !errors.Is(err, errIndexFailure) {
+		t.Fatalf("expected error to wrap index failure, got %v", err)
+	}
+}
+
+func TestEnsureBaseIndexesValidatesContext(t *testing.T) {
+	fake := newFakeMongoClient(t)
+	restoreConnect := stubConnect(fake, nil)
+	t.Cleanup(restoreConnect)
+
+	manager, err := NewManager(context.Background(), config.Config{MongoURI: "mongodb://stub", MongoDB: "tg_bot_test"})
+	if err != nil {
+		t.Fatalf("expected manager to initialize, got error: %v", err)
+	}
+
+	if err := manager.EnsureBaseIndexes(nil); err == nil {
+		t.Fatalf("expected error for nil context")
+	}
+}
+
 type fakeMongoClient struct {
 	client           *mongo.Client
 	pingErr          error
@@ -152,5 +232,63 @@ func stubConnect(fake mongoClient, err error) func() {
 
 	return func() {
 		connectMongo = prev
+	}
+}
+
+var errIndexFailure = errors.New("index failure")
+
+type indexCall struct {
+	collection string
+	models     []mongo.IndexModel
+}
+
+type indexRecorder struct {
+	t               *testing.T
+	calls           []indexCall
+	errorCollection string
+}
+
+func newIndexRecorder(t *testing.T, errorCollection string) *indexRecorder {
+	t.Helper()
+	return &indexRecorder{t: t, errorCollection: errorCollection}
+}
+
+func (r *indexRecorder) stub() func() {
+	prev := createIndexes
+	createIndexes = func(ctx context.Context, coll *mongo.Collection, models []mongo.IndexModel) ([]string, error) {
+		r.calls = append(r.calls, indexCall{collection: coll.Name(), models: models})
+		if r.errorCollection == coll.Name() {
+			return nil, errIndexFailure
+		}
+		return []string{coll.Name() + "_idx"}, nil
+	}
+
+	return func() {
+		createIndexes = prev
+	}
+}
+
+func assertUniqueIndex(t *testing.T, models []mongo.IndexModel, key, name string) {
+	t.Helper()
+
+	if len(models) != 1 {
+		t.Fatalf("expected 1 index model, got %d", len(models))
+	}
+
+	keysDoc, ok := models[0].Keys.(bson.D)
+	if !ok {
+		t.Fatalf("expected bson.D keys, got %T", models[0].Keys)
+	}
+
+	if len(keysDoc) != 1 || keysDoc[0].Key != key {
+		t.Fatalf("expected index key %s, got %v", key, keysDoc)
+	}
+
+	if models[0].Options == nil || models[0].Options.Unique == nil || !*models[0].Options.Unique {
+		t.Fatalf("expected unique option for %s", key)
+	}
+
+	if models[0].Options.Name == nil || *models[0].Options.Name != name {
+		t.Fatalf("expected index name %s, got %v", name, models[0].Options.Name)
 	}
 }

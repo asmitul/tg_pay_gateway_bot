@@ -14,6 +14,7 @@ import (
 
 const (
 	mongoConnectTimeout    = 10 * time.Second
+	mongoIndexTimeout      = 5 * time.Second
 	mongoDisconnectTimeout = 5 * time.Second
 )
 
@@ -57,6 +58,17 @@ func main() {
 	}
 
 	logger.WithField("event", "mongo_connect").Info("connected to mongo")
+
+	indexCtx, cancelIndexes := context.WithTimeout(context.Background(), mongoIndexTimeout)
+	if err := mongoManager.EnsureBaseIndexes(indexCtx); err != nil {
+		cancelIndexes()
+		logger.WithError(err).Error("mongo index setup error")
+		fmt.Fprintf(os.Stderr, "mongo index setup error: %v\n", err)
+		os.Exit(1)
+	}
+	cancelIndexes()
+
+	logger.WithField("event", "mongo_indexes").Info("ensured base mongo indexes")
 
 	defer func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), mongoDisconnectTimeout)

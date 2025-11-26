@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 
+	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.mongodb.org/mongo-driver/mongo/readpref"
@@ -30,6 +31,11 @@ type mongoClient interface {
 // connectMongo is overridable for tests.
 var connectMongo = func(ctx context.Context, opts *options.ClientOptions) (mongoClient, error) {
 	return mongo.Connect(ctx, opts)
+}
+
+// createIndexes is overridable for tests.
+var createIndexes = func(ctx context.Context, coll *mongo.Collection, models []mongo.IndexModel) ([]string, error) {
+	return coll.Indexes().CreateMany(ctx, models)
 }
 
 // Manager owns a MongoDB client and the configured database handle.
@@ -89,6 +95,45 @@ func (m *Manager) Users() *mongo.Collection {
 // Groups returns the groups collection handle.
 func (m *Manager) Groups() *mongo.Collection {
 	return m.Collection(CollectionGroups)
+}
+
+// EnsureBaseIndexes creates the foundational indexes for the users and groups
+// collections. Collections are created implicitly if they do not already exist.
+func (m *Manager) EnsureBaseIndexes(ctx context.Context) error {
+	if ctx == nil {
+		return errors.New("context is required")
+	}
+	if m == nil || m.db == nil {
+		return errors.New("store manager is not initialized")
+	}
+
+	userIndexes := []mongo.IndexModel{
+		{
+			Keys: bson.D{{Key: "user_id", Value: 1}},
+			Options: options.Index().
+				SetName("user_id_unique").
+				SetUnique(true),
+		},
+	}
+
+	if _, err := createIndexes(ctx, m.Users(), userIndexes); err != nil {
+		return fmt.Errorf("create users indexes: %w", err)
+	}
+
+	groupIndexes := []mongo.IndexModel{
+		{
+			Keys: bson.D{{Key: "chat_id", Value: 1}},
+			Options: options.Index().
+				SetName("chat_id_unique").
+				SetUnique(true),
+		},
+	}
+
+	if _, err := createIndexes(ctx, m.Groups(), groupIndexes); err != nil {
+		return fmt.Errorf("create groups indexes: %w", err)
+	}
+
+	return nil
 }
 
 // Close disconnects the Mongo client.

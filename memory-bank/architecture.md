@@ -24,4 +24,7 @@
 - Default database `tg_bot_dev` is set via `MONGO_INITDB_DATABASE`; production deployments must enable credentials and use `tg_bot` (pattern `tg_bot_{APP_ENV}` is acceptable).
 
 ## Database Schema
-- No collections are defined or initialized yet. Planned base collections (per implementation plan Step 11) are `users` (unique `user_id`, `role`, timestamps) and `groups` (unique `chat_id`, title, joined timestamps), but they have not been created or indexed in this iteration.
+- Base collections created for the bot skeleton:
+  - `users`: fields `user_id` (unique), `role`, `created_at`, `updated_at`.
+  - `groups`: fields `chat_id` (unique), `title`, `joined_at`.
+- Unique indexes are ensured at startup via `store.Manager.EnsureBaseIndexes`: `users.user_id` (`user_id_unique`) and `groups.chat_id` (`chat_id_unique`).
