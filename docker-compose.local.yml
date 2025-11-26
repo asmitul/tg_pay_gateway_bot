@@ -1,0 +1,22 @@
+services:
+  mongo:
+    image: mongo:6.0
+    container_name: tg-pay-gateway-mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    environment:
+      # Development only; enable auth and credentials for production deployments.
+      MONGO_INITDB_DATABASE: tg_bot_dev
+    command: ["--bind_ip", "0.0.0.0"]
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand({ ping: 1 })"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+volumes:
+  mongo_data:

@@ -13,6 +13,9 @@ This iteration delivers the base bot only — no payment channels, billing flows
 ## Configuration
 Environment keys and defaults are defined centrally in `internal/config/config.go` (`Contract` is the authoritative list).
 
+## Local Development
+- Start MongoDB with `docker compose -f docker-compose.local.yml up -d` (Mongo 6.0, dev no-auth, persistent volume). Default DB is `tg_bot_dev`; production deployments should enable auth and use `tg_bot`.
+
 ## Reference Docs
 - Design intent and scenarios: `memory-bank/design-document.md`
 - Technology choices: `memory-bank/tech-stack.md`

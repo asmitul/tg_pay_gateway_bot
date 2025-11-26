@@ -15,5 +15,9 @@
 - Configuration dry-run supported via `-config-only` flag: loads config, validates Mongo URI scheme/host, prints a redacted summary (hiding token/credentials), then exits without starting the bot.
 - Structured logging initialized (Implementation Plan Step 7): global logrus logger with JSON format in production and text in development, default fields `service=telegram-bot` and `env`, key names `ts/level/msg`, and helpers for info/warn/error plus contextual `user_id/chat_id/event` fields.
 
+## Local Development Stack
+- `docker-compose.local.yml` provides MongoDB 6.0 for development (no auth, bound to 0.0.0.0:27017) with a persistent `mongo_data` volume.
+- Default database `tg_bot_dev` is set via `MONGO_INITDB_DATABASE`; production deployments must enable credentials and use `tg_bot` (pattern `tg_bot_{APP_ENV}` is acceptable).
+
 ## Database Schema
 - No collections are defined or initialized yet. Planned base collections (per implementation plan Step 11) are `users` (unique `user_id`, `role`, timestamps) and `groups` (unique `chat_id`, title, joined timestamps), but they have not been created or indexed in this iteration.
