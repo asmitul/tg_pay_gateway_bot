@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"tg_pay_gateway_bot/internal/config"
+	"tg_pay_gateway_bot/internal/feature/owner"
 	"tg_pay_gateway_bot/internal/logging"
 	"tg_pay_gateway_bot/internal/store"
 	"tg_pay_gateway_bot/internal/telegram"
@@ -19,6 +20,7 @@ const (
 	mongoConnectTimeout    = 10 * time.Second
 	mongoIndexTimeout      = 5 * time.Second
 	mongoDisconnectTimeout = 5 * time.Second
+	ownerBootstrapTimeout  = 5 * time.Second
 )
 
 func main() {
@@ -72,6 +74,16 @@ func main() {
 	cancelIndexes()
 
 	logger.WithField("event", "mongo_indexes").Info("ensured base mongo indexes")
+
+	ownerRegistrar := owner.NewRegistrar(mongoManager.Users(), logger)
+	ownerCtx, cancelOwner := context.WithTimeout(context.Background(), ownerBootstrapTimeout)
+	if err := ownerRegistrar.EnsureOwner(ownerCtx, cfg.BotOwnerID); err != nil {
+		cancelOwner()
+		logger.WithError(err).Error("owner bootstrap error")
+		fmt.Fprintf(os.Stderr, "owner bootstrap error: %v\n", err)
+		os.Exit(1)
+	}
+	cancelOwner()
 
 	defer func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), mongoDisconnectTimeout)

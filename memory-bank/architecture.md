@@ -19,6 +19,10 @@
 - Mongo manager added (Implementation Plan Step 10): `internal/store.Manager` establishes a single Mongo client with URI/DB from config, pings the primary on startup, and exposes helpers for `users` and `groups` collections.
 - Connection lifecycle: main uses a 10s connect timeout and 5s disconnect timeout; shutdown logs success or errors and cleans up the client.
 
+## Owner Bootstrap
+- Startup runs an owner registrar (`internal/feature/owner.Registrar`) after indexes are ensured: it upserts the configured `BOT_OWNER` into `users` with `role=owner`, sets `created_at` on first insert and `updated_at` on every run, and logs `event=owner_bootstrap` with demote/upsert counts.
+- Any existing owners whose `user_id` differs from `BOT_OWNER` are demoted to `role=admin` to enforce a single owner record.
+
 ## Telegram Client Connectivity
 - Telegram wired via `github.com/go-telegram/bot` (Implementation Plan Step 12) using long polling.
 - Allowed updates subscribed by default: `message`, `edited_message`, `callback_query`, `my_chat_member`, `chat_member`.
