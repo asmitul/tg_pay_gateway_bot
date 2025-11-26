@@ -19,6 +19,10 @@
 - Mongo manager added (Implementation Plan Step 10): `internal/store.Manager` establishes a single Mongo client with URI/DB from config, pings the primary on startup, and exposes helpers for `users` and `groups` collections.
 - Connection lifecycle: main uses a 10s connect timeout and 5s disconnect timeout; shutdown logs success or errors and cleans up the client.
 
+## Domain Models
+- Users are represented by `domain.User` with `user_id`, `role` (owner/admin/user), and timestamps `created_at`/`updated_at`. Role priority helper maps owner=3, admin=2, user=1 for access decisions.
+- Groups are represented by `domain.Group` with `chat_id`, `title`, `joined_at`, and `last_seen_at` (defaults to `joined_at` when not pre-populated).
+
 ## Owner Bootstrap
 - Startup runs an owner registrar (`internal/feature/owner.Registrar`) after indexes are ensured: it upserts the configured `BOT_OWNER` into `users` with `role=owner`, sets `created_at` on first insert and `updated_at` on every run, and logs `event=owner_bootstrap` with demote/upsert counts.
 - Any existing owners whose `user_id` differs from `BOT_OWNER` are demoted to `role=admin` to enforce a single owner record.
@@ -36,5 +40,5 @@
 ## Database Schema
 - Base collections created for the bot skeleton:
   - `users`: fields `user_id` (unique), `role`, `created_at`, `updated_at`.
-  - `groups`: fields `chat_id` (unique), `title`, `joined_at`.
+  - `groups`: fields `chat_id` (unique), `title`, `joined_at`, `last_seen_at` (set to `joined_at` on insert).
 - Unique indexes are ensured at startup via `store.Manager.EnsureBaseIndexes`: `users.user_id` (`user_id_unique`) and `groups.chat_id` (`chat_id_unique`).
