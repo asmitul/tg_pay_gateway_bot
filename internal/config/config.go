@@ -4,6 +4,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -149,6 +150,8 @@ func Load() (Config, error) {
 
 	if cfg.MongoURI == "" {
 		missing = append(missing, KeyMongoURI)
+	} else if err := validateMongoURI(cfg.MongoURI); err != nil {
+		return Config{}, err
 	}
 
 	if cfg.MongoDB == "" {
@@ -177,6 +180,22 @@ func Load() (Config, error) {
 // IsDevelopment reports if APP_ENV is development.
 func (c Config) IsDevelopment() bool {
 	return c.AppEnv == EnvDevelopment
+}
+
+// FormatRedacted returns a human-readable, secret-safe summary of the resolved configuration.
+// Secrets such as TELEGRAM_TOKEN and MongoDB credentials are redacted.
+func FormatRedacted(cfg Config) string {
+	lines := []string{
+		"app_env: " + cfg.AppEnv,
+		fmt.Sprintf("bot_owner: %d", cfg.BotOwnerID),
+		"telegram_token: " + maskSecret(cfg.TelegramToken),
+		"mongo_uri: " + redactMongoURI(cfg.MongoURI),
+		"mongo_db: " + cfg.MongoDB,
+		"log_level: " + cfg.LogLevel,
+		fmt.Sprintf("http_port: %d", cfg.HTTPPort),
+	}
+
+	return strings.Join(lines, "\n")
 }
 
 func resolveAppEnv() (string, error) {
@@ -222,6 +241,23 @@ func validateAppEnv(appEnv string) error {
 	return fmt.Errorf("invalid %s: must be %q or %q", KeyAppEnv, EnvDevelopment, EnvProduction)
 }
 
+func validateMongoURI(uri string) error {
+	parsed, err := url.Parse(uri)
+	if err != nil {
+		return fmt.Errorf("invalid %s: %w", KeyMongoURI, err)
+	}
+
+	if parsed.Scheme != "mongodb" && parsed.Scheme != "mongodb+srv" {
+		return fmt.Errorf("invalid %s: unsupported scheme %q", KeyMongoURI, parsed.Scheme)
+	}
+
+	if parsed.Host == "" {
+		return fmt.Errorf("invalid %s: missing host", KeyMongoURI)
+	}
+
+	return nil
+}
+
 func normalizeEnv(value string) string {
 	return strings.ToLower(strings.TrimSpace(value))
 }
@@ -233,4 +269,28 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func maskSecret(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "<empty>"
+	}
+
+	if len(value) <= 4 {
+		return "***"
+	}
+
+	return value[:4] + "...redacted"
+}
+
+func redactMongoURI(uri string) string {
+	parsed, err := url.Parse(uri)
+	if err != nil {
+		return "<invalid>"
+	}
+
+	parsed.User = nil
+
+	return parsed.String()
 }

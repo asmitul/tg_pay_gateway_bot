@@ -3,6 +3,7 @@
 - Completed Implementation Plan Step 5: added config loader with APP_ENV-driven dotenv support, required key validation, and HTTP port/log level defaults.
 - Added config unit tests covering success, missing required keys, invalid BOT_OWNER/HTTP_PORT, and .env development load path; `go test ./...` passing.
 - Wired cmd/bot/main.go to fail fast on config errors and print a simple success message.
+- Completed Implementation Plan Step 6: added `-config-only` dry-run flag printing a redacted config summary, plus Mongo URI validation and masking tests to fail fast on bad values.
 
 ## 2025-11-25
 - Completed Implementation Plan Step 1 (runtime/tooling confirmation).

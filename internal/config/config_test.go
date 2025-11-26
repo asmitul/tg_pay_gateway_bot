@@ -165,6 +165,54 @@ LOG_LEVEL=debug
 	}
 }
 
+func TestLoadValidatesMongoURIFormat(t *testing.T) {
+	unsetEnv(t, KeyAppEnv)
+
+	t.Setenv(KeyTelegramToken, "token")
+	t.Setenv(KeyBotOwner, "123")
+	t.Setenv(KeyMongoURI, "http://localhost:27017")
+	t.Setenv(KeyMongoDB, "tg_bot")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatalf("expected invalid mongo uri to error")
+	}
+
+	if !strings.Contains(err.Error(), KeyMongoURI) {
+		t.Fatalf("expected error to mention %s, got %v", KeyMongoURI, err)
+	}
+}
+
+func TestFormatRedactedMasksSecrets(t *testing.T) {
+	cfg := Config{
+		TelegramToken: "abcd1234secret",
+		BotOwnerID:    42,
+		MongoURI:      "mongodb://user:pass@localhost:27017/tg_bot",
+		MongoDB:       "tg_bot",
+		AppEnv:        EnvDevelopment,
+		LogLevel:      "debug",
+		HTTPPort:      9000,
+	}
+
+	summary := FormatRedacted(cfg)
+
+	if strings.Contains(summary, "user:pass@") {
+		t.Fatalf("expected mongo uri credentials to be redacted, got %s", summary)
+	}
+
+	if !strings.Contains(summary, "mongodb://localhost:27017/tg_bot") {
+		t.Fatalf("expected mongo uri host to remain after redaction, got %s", summary)
+	}
+
+	if strings.Contains(summary, "1234secret") {
+		t.Fatalf("expected telegram token to be redacted, got %s", summary)
+	}
+
+	if !strings.Contains(summary, "telegram_token: abcd...redacted") {
+		t.Fatalf("expected telegram token to show masked prefix, got %s", summary)
+	}
+}
+
 func unsetEnv(t *testing.T, key string) {
 	t.Helper()
 	t.Setenv(key, "")
