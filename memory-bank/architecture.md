@@ -66,6 +66,10 @@
 - `.dockerignore` trims docs/editor/test artifacts from the build context to keep rebuilds and image layers small.
 - Local build/verify example: `docker build -t tg-pay-gateway-bot:local .` then `docker run --rm -e TELEGRAM_TOKEN=dummy -e BOT_OWNER=1 -e MONGO_URI=mongodb://localhost:27017 -e MONGO_DB=tg_bot_dev tg-pay-gateway-bot:local -config-only`.
 
+## CI/CD
+- GitHub Actions `ci.yml` enforces `go fmt ./...`, `go test ./...`, and `go build ./cmd/bot` on pushes/PRs to `main` with module caching and test log artifacts.
+- GitHub Actions `release.yml` (push to `main` or manual dispatch) logs into GHCR using `GITHUB_TOKEN`, builds/pushes Docker images tagged with the commit SHA and `latest` under `ghcr.io/<repo_owner>/tg-pay-gateway-bot`, and publishes commit/image tags plus the image digest as outputs for downstream deploys.
+
 ## Database Schema
 - Base collections created for the bot skeleton:
   - `users`: fields `user_id` (unique), `role`, `created_at`, `updated_at`, `last_seen_at` (updated for each user interaction).
