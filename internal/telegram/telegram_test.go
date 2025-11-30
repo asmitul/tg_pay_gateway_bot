@@ -117,21 +117,40 @@ func TestExtractUpdateMeta(t *testing.T) {
 				Message: &models.Message{
 					From: &models.User{ID: 10},
 					Chat: models.Chat{ID: 20, Type: models.ChatTypePrivate},
+					Date: 1700000000,
 					Text: " hello ",
 				},
 			},
-			want: updateMeta{userID: 10, chatID: 20, text: "hello", updateType: "message", chatType: string(models.ChatTypePrivate), chatTitle: ""},
+			want: updateMeta{
+				userID:     10,
+				chatID:     20,
+				text:       "hello",
+				updateType: "message",
+				chatType:   string(models.ChatTypePrivate),
+				chatTitle:  "",
+				timestamp:  time.Unix(1700000000, 0).UTC(),
+			},
 		},
 		{
 			name: "edited message",
 			update: &models.Update{
 				EditedMessage: &models.Message{
-					From: &models.User{ID: 11},
-					Chat: models.Chat{ID: 21, Type: models.ChatTypeSupergroup, Title: "Super Chat"},
-					Text: "updated",
+					From:     &models.User{ID: 11},
+					Chat:     models.Chat{ID: 21, Type: models.ChatTypeSupergroup, Title: "Super Chat"},
+					Text:     "updated",
+					Date:     1700000001,
+					EditDate: 1700000020,
 				},
 			},
-			want: updateMeta{userID: 11, chatID: 21, text: "updated", updateType: "edited_message", chatType: string(models.ChatTypeSupergroup), chatTitle: "Super Chat"},
+			want: updateMeta{
+				userID:     11,
+				chatID:     21,
+				text:       "updated",
+				updateType: "edited_message",
+				chatType:   string(models.ChatTypeSupergroup),
+				chatTitle:  "Super Chat",
+				timestamp:  time.Unix(1700000020, 0).UTC(),
+			},
 		},
 		{
 			name: "callback query",
@@ -143,11 +162,20 @@ func TestExtractUpdateMeta(t *testing.T) {
 						Type: models.MaybeInaccessibleMessageTypeMessage,
 						Message: &models.Message{
 							Chat: models.Chat{ID: 22, Type: models.ChatTypeGroup, Title: "Callback Group"},
+							Date: 1700000030,
 						},
 					},
 				},
 			},
-			want: updateMeta{userID: 12, chatID: 22, text: "choice", updateType: "callback_query", chatType: string(models.ChatTypeGroup), chatTitle: "Callback Group"},
+			want: updateMeta{
+				userID:     12,
+				chatID:     22,
+				text:       "choice",
+				updateType: "callback_query",
+				chatType:   string(models.ChatTypeGroup),
+				chatTitle:  "Callback Group",
+				timestamp:  time.Unix(1700000030, 0).UTC(),
+			},
 		},
 		{
 			name: "my chat member",
@@ -155,9 +183,17 @@ func TestExtractUpdateMeta(t *testing.T) {
 				MyChatMember: &models.ChatMemberUpdated{
 					From: models.User{ID: 13},
 					Chat: models.Chat{ID: 23, Type: models.ChatTypeGroup, Title: "My Chat Group"},
+					Date: 1700000040,
 				},
 			},
-			want: updateMeta{userID: 13, chatID: 23, updateType: "my_chat_member", chatType: string(models.ChatTypeGroup), chatTitle: "My Chat Group"},
+			want: updateMeta{
+				userID:     13,
+				chatID:     23,
+				updateType: "my_chat_member",
+				chatType:   string(models.ChatTypeGroup),
+				chatTitle:  "My Chat Group",
+				timestamp:  time.Unix(1700000040, 0).UTC(),
+			},
 		},
 		{
 			name: "chat member",
@@ -165,14 +201,22 @@ func TestExtractUpdateMeta(t *testing.T) {
 				ChatMember: &models.ChatMemberUpdated{
 					From: models.User{ID: 14},
 					Chat: models.Chat{ID: 24, Type: models.ChatTypeGroup, Title: "Chat Member Group"},
+					Date: 1700000050,
 				},
 			},
-			want: updateMeta{userID: 14, chatID: 24, updateType: "chat_member", chatType: string(models.ChatTypeGroup), chatTitle: "Chat Member Group"},
+			want: updateMeta{
+				userID:     14,
+				chatID:     24,
+				updateType: "chat_member",
+				chatType:   string(models.ChatTypeGroup),
+				chatTitle:  "Chat Member Group",
+				timestamp:  time.Unix(1700000050, 0).UTC(),
+			},
 		},
 		{
 			name:   "unknown",
 			update: &models.Update{},
-			want:   updateMeta{updateType: "unknown"},
+			want:   updateMeta{updateType: "unknown", timestamp: time.Time{}},
 		},
 	}
 
@@ -180,7 +224,7 @@ func TestExtractUpdateMeta(t *testing.T) {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			got := extractUpdateMeta(tt.update)
-			if got.userID != tt.want.userID || got.chatID != tt.want.chatID || got.text != tt.want.text || got.updateType != tt.want.updateType || got.chatType != tt.want.chatType || got.chatTitle != tt.want.chatTitle {
+			if got.userID != tt.want.userID || got.chatID != tt.want.chatID || got.text != tt.want.text || got.updateType != tt.want.updateType || got.chatType != tt.want.chatType || got.chatTitle != tt.want.chatTitle || !got.timestamp.Equal(tt.want.timestamp) {
 				t.Fatalf("extractUpdateMeta() = %+v, want %+v", got, tt.want)
 			}
 		})
@@ -196,6 +240,7 @@ func TestDefaultHandlerLogsUpdate(t *testing.T) {
 			From: &models.User{ID: 99},
 			Chat: models.Chat{ID: 199, Type: models.ChatTypePrivate},
 			Text: "ping",
+			Date: 1700001000,
 		},
 	}
 
@@ -227,6 +272,17 @@ func TestDefaultHandlerLogsUpdate(t *testing.T) {
 	}
 	if updateEntry.Data["chat_type"] != "private" {
 		t.Fatalf("expected chat_type=private, got %v", updateEntry.Data["chat_type"])
+	}
+	if updateEntry.Data["handler"] != "generic_message" {
+		t.Fatalf("expected handler=generic_message, got %v", updateEntry.Data["handler"])
+	}
+	ts, ok := updateEntry.Data["update_ts"].(string)
+	if !ok {
+		t.Fatalf("expected update_ts to be a string, got %T", updateEntry.Data["update_ts"])
+	}
+	expectedTS := time.Unix(1700001000, 0).UTC().Format(time.RFC3339Nano)
+	if ts != expectedTS {
+		t.Fatalf("expected update_ts=%s, got %s", expectedTS, ts)
 	}
 }
 

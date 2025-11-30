@@ -202,6 +202,7 @@ type updateMeta struct {
 	updateType string
 	chatType   string
 	chatTitle  string
+	timestamp  time.Time
 }
 
 type registeredHandler struct {
@@ -255,10 +256,10 @@ func newMessageRouter(logger *logrus.Entry, botOwnerID int64, diag commandDiagno
 	}
 }
 
-func (r *messageRouter) route(ctx context.Context, b *bot.Bot, update *models.Update, meta updateMeta) {
+func (r *messageRouter) route(ctx context.Context, b *bot.Bot, update *models.Update, meta updateMeta) string {
 	msg := primaryMessage(update)
 	if msg == nil {
-		return
+		return ""
 	}
 
 	normalizedChatType := normalizeChatType(meta.chatType)
@@ -272,11 +273,12 @@ func (r *messageRouter) route(ctx context.Context, b *bot.Bot, update *models.Up
 
 		r.logRoute(meta, normalizedChatType, target.name, "command", cmd)
 		target.handler(ctx, b, update)
-		return
+		return target.name
 	}
 
 	r.logRoute(meta, normalizedChatType, r.genericHandler.name, "message", "")
 	r.genericHandler.handler(ctx, b, update)
+	return r.genericHandler.name
 }
 
 func (r *messageRouter) logRoute(meta updateMeta, chatType, handlerName, route, command string) {
@@ -318,6 +320,10 @@ func defaultHandler(logger *logrus.Entry, userRegistrar UserRegistrar, groupRegi
 		}
 
 		meta := extractUpdateMeta(update)
+		updateTime := meta.timestamp
+		if updateTime.IsZero() {
+			updateTime = time.Now().UTC()
+		}
 
 		normalizedChatType := normalizeChatType(meta.chatType)
 
@@ -341,9 +347,12 @@ func defaultHandler(logger *logrus.Entry, userRegistrar UserRegistrar, groupRegi
 			}
 		}
 
+		handlerName := router.route(ctx, b, update, meta)
+
 		fields := logging.Fields{
 			"event":       "telegram_update",
 			"update_type": meta.updateType,
+			"update_ts":   updateTime.Format(time.RFC3339Nano),
 		}
 
 		if meta.text != "" {
@@ -358,61 +367,111 @@ func defaultHandler(logger *logrus.Entry, userRegistrar UserRegistrar, groupRegi
 		if meta.chatType != "" {
 			fields["chat_type"] = normalizedChatType
 		}
+		if handlerName != "" {
+			fields["handler"] = handlerName
+		}
 
 		logger.WithFields(fields).Info("telegram update received")
-
-		router.route(ctx, b, update, meta)
 	}
 }
 
 func extractUpdateMeta(update *models.Update) updateMeta {
+	meta := updateMeta{
+		timestamp: updateTimestamp(update),
+	}
+
 	switch {
 	case update.Message != nil:
-		return updateMeta{
-			userID:     userID(update.Message.From),
-			chatID:     chatID(&update.Message.Chat),
-			text:       strings.TrimSpace(update.Message.Text),
-			chatTitle:  chatTitle(&update.Message.Chat),
-			chatType:   string(update.Message.Chat.Type),
-			updateType: "message",
-		}
+		meta.userID = userID(update.Message.From)
+		meta.chatID = chatID(&update.Message.Chat)
+		meta.text = strings.TrimSpace(update.Message.Text)
+		meta.chatTitle = chatTitle(&update.Message.Chat)
+		meta.chatType = string(update.Message.Chat.Type)
+		meta.updateType = "message"
 	case update.EditedMessage != nil:
-		return updateMeta{
-			userID:     userID(update.EditedMessage.From),
-			chatID:     chatID(&update.EditedMessage.Chat),
-			text:       strings.TrimSpace(update.EditedMessage.Text),
-			chatTitle:  chatTitle(&update.EditedMessage.Chat),
-			chatType:   string(update.EditedMessage.Chat.Type),
-			updateType: "edited_message",
-		}
+		meta.userID = userID(update.EditedMessage.From)
+		meta.chatID = chatID(&update.EditedMessage.Chat)
+		meta.text = strings.TrimSpace(update.EditedMessage.Text)
+		meta.chatTitle = chatTitle(&update.EditedMessage.Chat)
+		meta.chatType = string(update.EditedMessage.Chat.Type)
+		meta.updateType = "edited_message"
 	case update.CallbackQuery != nil:
-		return updateMeta{
-			userID:     userID(&update.CallbackQuery.From),
-			chatID:     messageChatID(update.CallbackQuery.Message),
-			text:       strings.TrimSpace(update.CallbackQuery.Data),
-			chatTitle:  messageChatTitle(update.CallbackQuery.Message),
-			chatType:   messageChatType(update.CallbackQuery.Message),
-			updateType: "callback_query",
-		}
+		meta.userID = userID(&update.CallbackQuery.From)
+		meta.chatID = messageChatID(update.CallbackQuery.Message)
+		meta.text = strings.TrimSpace(update.CallbackQuery.Data)
+		meta.chatTitle = messageChatTitle(update.CallbackQuery.Message)
+		meta.chatType = messageChatType(update.CallbackQuery.Message)
+		meta.updateType = "callback_query"
 	case update.MyChatMember != nil:
-		return updateMeta{
-			userID:     userID(&update.MyChatMember.From),
-			chatID:     chatID(&update.MyChatMember.Chat),
-			chatTitle:  chatTitle(&update.MyChatMember.Chat),
-			chatType:   string(update.MyChatMember.Chat.Type),
-			updateType: "my_chat_member",
-		}
+		meta.userID = userID(&update.MyChatMember.From)
+		meta.chatID = chatID(&update.MyChatMember.Chat)
+		meta.chatTitle = chatTitle(&update.MyChatMember.Chat)
+		meta.chatType = string(update.MyChatMember.Chat.Type)
+		meta.updateType = "my_chat_member"
 	case update.ChatMember != nil:
-		return updateMeta{
-			userID:     userID(&update.ChatMember.From),
-			chatID:     chatID(&update.ChatMember.Chat),
-			chatTitle:  chatTitle(&update.ChatMember.Chat),
-			chatType:   string(update.ChatMember.Chat.Type),
-			updateType: "chat_member",
-		}
+		meta.userID = userID(&update.ChatMember.From)
+		meta.chatID = chatID(&update.ChatMember.Chat)
+		meta.chatTitle = chatTitle(&update.ChatMember.Chat)
+		meta.chatType = string(update.ChatMember.Chat.Type)
+		meta.updateType = "chat_member"
 	default:
-		return updateMeta{updateType: "unknown"}
+		meta.updateType = "unknown"
 	}
+
+	return meta
+}
+
+func updateTimestamp(update *models.Update) time.Time {
+	switch {
+	case update == nil:
+		return time.Time{}
+	case update.Message != nil:
+		return timestampFromMessage(update.Message)
+	case update.EditedMessage != nil:
+		return timestampFromMessage(update.EditedMessage)
+	case update.CallbackQuery != nil:
+		return timestampFromMaybeMessage(update.CallbackQuery.Message)
+	case update.MyChatMember != nil:
+		return unixToTime(update.MyChatMember.Date)
+	case update.ChatMember != nil:
+		return unixToTime(update.ChatMember.Date)
+	default:
+		return time.Time{}
+	}
+}
+
+func timestampFromMessage(msg *models.Message) time.Time {
+	if msg == nil {
+		return time.Time{}
+	}
+
+	if msg.EditDate > 0 {
+		return unixToTime(msg.EditDate)
+	}
+
+	return unixToTime(msg.Date)
+}
+
+func timestampFromMaybeMessage(msg models.MaybeInaccessibleMessage) time.Time {
+	switch msg.Type {
+	case models.MaybeInaccessibleMessageTypeMessage:
+		return timestampFromMessage(msg.Message)
+	case models.MaybeInaccessibleMessageTypeInaccessibleMessage:
+		if msg.InaccessibleMessage != nil {
+			return unixToTime(msg.InaccessibleMessage.Date)
+		}
+		return time.Time{}
+	default:
+		return time.Time{}
+	}
+}
+
+func unixToTime(ts int) time.Time {
+	if ts <= 0 {
+		return time.Time{}
+	}
+
+	return time.Unix(int64(ts), 0).UTC()
 }
 
 func errorHandler(logger *logrus.Entry) bot.ErrorsHandler {
