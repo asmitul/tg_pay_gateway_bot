@@ -73,7 +73,7 @@ jobs:
           fi
 
           {
-            echo "tags<<'EOF'"
+            echo "tags<<EOF"
             printf '%s\n' "${TAGS[@]}"
             echo "EOF"
             echo "sha_tag=${SHA_TAG}"
