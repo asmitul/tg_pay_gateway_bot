@@ -49,6 +49,7 @@
 ## Diagnostics
 - `store.Manager` exposes `Ping(ctx)` to verify Mongo connectivity and wraps failures for caller-friendly errors.
 - `/ping` command replies with `pong`, `env`, `uptime` (derived from process start time), and `mongo: ok|error`; Mongo ping uses a 2s timeout and logs failures but still responds to the user.
+- HTTP health endpoint `/healthz` served on `HTTP_PORT` (default 8080) returns `{"status":"ok"}` when Mongo ping succeeds and `{"status":"degraded","mongo":"error"}` when Mongo is unreachable or the checker is missing; Mongo health ping uses a 2s timeout and the server shuts down gracefully with the process.
 
 ## Permissions & Admin Commands
 - Owner-only commands validate the Mongo-backed user role and require the `BOT_OWNER` id; unauthorized users receive a short “permission denied” reply with audit logs.
