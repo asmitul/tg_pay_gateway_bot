@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"tg_pay_gateway_bot/internal/config"
+	"tg_pay_gateway_bot/internal/domain"
 	"tg_pay_gateway_bot/internal/feature/group"
 	"tg_pay_gateway_bot/internal/feature/owner"
 	"tg_pay_gateway_bot/internal/feature/user"
@@ -91,6 +92,8 @@ func main() {
 
 	userRegistrar := user.NewRegistrar(mongoManager.Users(), logger)
 	groupRegistrar := group.NewRegistrar(mongoManager.Groups(), logger)
+	userRepository := domain.NewUserRepository(mongoManager.Users())
+	statsProvider := store.NewStatsProvider(mongoManager.Users(), mongoManager.Groups())
 
 	defer func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), mongoDisconnectTimeout)
@@ -109,6 +112,8 @@ func main() {
 		telegram.WithGroupRegistrar(groupRegistrar),
 		telegram.WithMongoChecker(mongoManager),
 		telegram.WithProcessStart(processStart),
+		telegram.WithUserFetcher(userRepository),
+		telegram.WithStatsProvider(statsProvider),
 	)
 	if err != nil {
 		logger.WithError(err).Error("telegram client setup error")

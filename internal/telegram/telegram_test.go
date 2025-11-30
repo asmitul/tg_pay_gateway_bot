@@ -14,6 +14,7 @@ import (
 	logtest "github.com/sirupsen/logrus/hooks/test"
 
 	"tg_pay_gateway_bot/internal/config"
+	"tg_pay_gateway_bot/internal/domain"
 )
 
 type fakeBot struct {
@@ -456,6 +457,41 @@ func TestDefaultHandlerRoutesPingCommand(t *testing.T) {
 	}
 }
 
+func TestDefaultHandlerRoutesStatusCommand(t *testing.T) {
+	hookLogger, hook := logtest.NewNullLogger()
+	handler := defaultHandler(logrus.NewEntry(hookLogger), nil, nil, 55, commandDiagnostics{})
+
+	update := &models.Update{
+		Message: &models.Message{
+			From: &models.User{ID: 55},
+			Chat: models.Chat{ID: 155, Type: models.ChatTypePrivate},
+			Text: "/status",
+		},
+	}
+
+	handler(context.Background(), nil, update)
+
+	routeEntry := findEvent(hook.AllEntries(), "telegram_route")
+	if routeEntry == nil {
+		t.Fatalf("expected telegram_route log entry")
+	}
+
+	if routeEntry.Data["handler"] != "command_status" {
+		t.Fatalf("expected handler=command_status, got %v", routeEntry.Data["handler"])
+	}
+	if routeEntry.Data["command"] != "status" {
+		t.Fatalf("expected command=status, got %v", routeEntry.Data["command"])
+	}
+
+	commandEntry := findEvent(hook.AllEntries(), "command_handler")
+	if commandEntry == nil {
+		t.Fatalf("expected command_handler log entry")
+	}
+	if commandEntry.Data["handler"] != "command_status" {
+		t.Fatalf("expected command handler name command_status, got %v", commandEntry.Data["handler"])
+	}
+}
+
 func TestStartCommandRepliesInPrivateChat(t *testing.T) {
 	hookLogger, hook := logtest.NewNullLogger()
 
@@ -640,6 +676,178 @@ func TestPingCommandReportsMongoError(t *testing.T) {
 	}
 }
 
+func TestStatusCommandRepliesWithCountsForOwner(t *testing.T) {
+	hookLogger, hook := logtest.NewNullLogger()
+
+	origSendMessage := sendMessage
+	defer func() { sendMessage = origSendMessage }()
+
+	var sentParams *bot.SendMessageParams
+	sendMessage = func(ctx context.Context, b *bot.Bot, params *bot.SendMessageParams) (*models.Message, error) {
+		sentParams = params
+		return &models.Message{}, nil
+	}
+
+	fetcher := &stubUserFetcher{user: domain.User{UserID: 500, Role: domain.RoleOwner}}
+	stats := &stubStatsProvider{usersCount: 7, groupsCount: 3}
+
+	handler := statusCommandHandler(logrus.NewEntry(hookLogger), 500, commandDiagnostics{
+		appEnv:        "development",
+		userFetcher:   fetcher,
+		statsProvider: stats,
+	})
+
+	update := &models.Update{
+		Message: &models.Message{
+			From: &models.User{ID: 500},
+			Chat: models.Chat{ID: 320, Type: models.ChatTypePrivate},
+			Text: "/status",
+		},
+	}
+
+	handler(context.Background(), &bot.Bot{}, update)
+
+	if sentParams == nil {
+		t.Fatalf("expected status command to send a message")
+	}
+	if sentParams.ChatID != int64(320) {
+		t.Fatalf("expected status message to be sent to chat 320, got %v", sentParams.ChatID)
+	}
+	if !strings.Contains(sentParams.Text, "bot_status: running") {
+		t.Fatalf("expected status response to include bot status, got %q", sentParams.Text)
+	}
+	if !strings.Contains(sentParams.Text, "env: development") {
+		t.Fatalf("expected status response to include env, got %q", sentParams.Text)
+	}
+	if !strings.Contains(sentParams.Text, "connected_chats: 3") {
+		t.Fatalf("expected status response to include group count, got %q", sentParams.Text)
+	}
+	if !strings.Contains(sentParams.Text, "registered_users: 7") {
+		t.Fatalf("expected status response to include user count, got %q", sentParams.Text)
+	}
+
+	if len(fetcher.calls) != 1 || fetcher.calls[0] != 500 {
+		t.Fatalf("expected user fetcher to be called once with owner id, got %v", fetcher.calls)
+	}
+	if stats.userCalls != 1 || stats.groupCalls != 1 {
+		t.Fatalf("expected stats provider to be called once for users/groups, got userCalls=%d groupCalls=%d", stats.userCalls, stats.groupCalls)
+	}
+
+	if findEvent(hook.AllEntries(), "command_status_sent") == nil {
+		t.Fatalf("expected command_status_sent log entry")
+	}
+	if findEvent(hook.AllEntries(), "command_status_denied") != nil {
+		t.Fatalf("expected no command_status_denied log entry for owner")
+	}
+}
+
+func TestStatusCommandDeniesNonOwner(t *testing.T) {
+	hookLogger, hook := logtest.NewNullLogger()
+
+	origSendMessage := sendMessage
+	defer func() { sendMessage = origSendMessage }()
+
+	var sentParams *bot.SendMessageParams
+	sendMessage = func(ctx context.Context, b *bot.Bot, params *bot.SendMessageParams) (*models.Message, error) {
+		sentParams = params
+		return &models.Message{}, nil
+	}
+
+	fetcher := &stubUserFetcher{user: domain.User{UserID: 600, Role: domain.RoleUser}}
+	stats := &stubStatsProvider{usersCount: 9, groupsCount: 4}
+
+	handler := statusCommandHandler(logrus.NewEntry(hookLogger), 500, commandDiagnostics{
+		appEnv:        "production",
+		userFetcher:   fetcher,
+		statsProvider: stats,
+	})
+
+	update := &models.Update{
+		Message: &models.Message{
+			From: &models.User{ID: 600},
+			Chat: models.Chat{ID: 360, Type: models.ChatTypePrivate},
+			Text: "/status",
+		},
+	}
+
+	handler(context.Background(), &bot.Bot{}, update)
+
+	if sentParams == nil {
+		t.Fatalf("expected status command to reply even when denied")
+	}
+	if !strings.Contains(sentParams.Text, "permission denied") {
+		t.Fatalf("expected permission denied message, got %q", sentParams.Text)
+	}
+
+	if stats.userCalls != 0 || stats.groupCalls != 0 {
+		t.Fatalf("expected stats provider not to be called on denial, got userCalls=%d groupCalls=%d", stats.userCalls, stats.groupCalls)
+	}
+
+	if findEvent(hook.AllEntries(), "command_status_denied") == nil {
+		t.Fatalf("expected command_status_denied log entry")
+	}
+	if findEvent(hook.AllEntries(), "command_status_sent") != nil {
+		t.Fatalf("expected no command_status_sent log entry for denied user")
+	}
+}
+
+func TestStatusCommandHandlesCountErrors(t *testing.T) {
+	hookLogger, hook := logtest.NewNullLogger()
+
+	origSendMessage := sendMessage
+	defer func() { sendMessage = origSendMessage }()
+
+	var sentParams *bot.SendMessageParams
+	sendMessage = func(ctx context.Context, b *bot.Bot, params *bot.SendMessageParams) (*models.Message, error) {
+		sentParams = params
+		return &models.Message{}, nil
+	}
+
+	fetcher := &stubUserFetcher{user: domain.User{UserID: 501, Role: domain.RoleOwner}}
+	stats := &stubStatsProvider{
+		userErr:     errors.New("users down"),
+		groupErr:    errors.New("groups down"),
+		usersCount:  0,
+		groupsCount: 0,
+	}
+
+	handler := statusCommandHandler(logrus.NewEntry(hookLogger), 501, commandDiagnostics{
+		appEnv:        "production",
+		userFetcher:   fetcher,
+		statsProvider: stats,
+	})
+
+	update := &models.Update{
+		Message: &models.Message{
+			From: &models.User{ID: 501},
+			Chat: models.Chat{ID: 361, Type: models.ChatTypePrivate},
+			Text: "/status",
+		},
+	}
+
+	handler(context.Background(), &bot.Bot{}, update)
+
+	if sentParams == nil {
+		t.Fatalf("expected status command to send a message even on errors")
+	}
+	if !strings.Contains(sentParams.Text, "connected_chats: error") {
+		t.Fatalf("expected group error indicator, got %q", sentParams.Text)
+	}
+	if !strings.Contains(sentParams.Text, "registered_users: error") {
+		t.Fatalf("expected user error indicator, got %q", sentParams.Text)
+	}
+
+	if findEvent(hook.AllEntries(), "command_status_group_count_error") == nil {
+		t.Fatalf("expected command_status_group_count_error log entry")
+	}
+	if findEvent(hook.AllEntries(), "command_status_user_count_error") == nil {
+		t.Fatalf("expected command_status_user_count_error log entry")
+	}
+	if findEvent(hook.AllEntries(), "command_status_sent") == nil {
+		t.Fatalf("expected command_status_sent log entry despite errors")
+	}
+}
+
 func TestDefaultHandlerRoutesUnknownCommandInGroup(t *testing.T) {
 	hookLogger, hook := logtest.NewNullLogger()
 	handler := defaultHandler(logrus.NewEntry(hookLogger), nil, nil, 0, commandDiagnostics{})
@@ -746,6 +954,36 @@ type stubMongoChecker struct {
 func (s *stubMongoChecker) Ping(ctx context.Context) error {
 	s.calls++
 	return s.err
+}
+
+type stubUserFetcher struct {
+	user  domain.User
+	err   error
+	calls []int64
+}
+
+func (s *stubUserFetcher) GetByID(ctx context.Context, userID int64) (domain.User, error) {
+	s.calls = append(s.calls, userID)
+	return s.user, s.err
+}
+
+type stubStatsProvider struct {
+	usersCount  int64
+	groupsCount int64
+	userErr     error
+	groupErr    error
+	userCalls   int
+	groupCalls  int
+}
+
+func (s *stubStatsProvider) CountUsers(ctx context.Context) (int64, error) {
+	s.userCalls++
+	return s.usersCount, s.userErr
+}
+
+func (s *stubStatsProvider) CountGroups(ctx context.Context) (int64, error) {
+	s.groupCalls++
+	return s.groupsCount, s.groupErr
 }
 
 func findEvent(entries []*logrus.Entry, event string) *logrus.Entry {

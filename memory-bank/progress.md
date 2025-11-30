@@ -1,4 +1,5 @@
 ## 2025-11-30
+- Completed Implementation Plan Step 20: added owner-only `/status` command that checks the Mongo-backed owner role (BOT_OWNER match) before execution, replies with env and live user/group counts using a stats provider with error fallbacks, and wired new dependencies through Telegram client/main with unit tests; `go test ./...` passing.
 - Completed Implementation Plan Step 19: added `/ping` health command returning env/uptime/Mongo status with a 2s Mongo ping, injected process start time and Mongo checker into Telegram client, exposed store.Manager Ping helper, and expanded tests; `go test ./...` passing.
 - Completed Implementation Plan Step 18: implemented `/start` command replying in private chats with a base-build welcome, role hint (owner vs user from configured BOT_OWNER), and registered status; ignored in groups with structured logs only; added handler wiring to include owner ID; expanded tests for /start replies and user registration on start; `go test ./...` passing.
 

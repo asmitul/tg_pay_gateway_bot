@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"tg_pay_gateway_bot/internal/config"
+	"tg_pay_gateway_bot/internal/domain"
 	"tg_pay_gateway_bot/internal/logging"
 )
 
@@ -20,7 +22,11 @@ type botRunner interface {
 	Start(ctx context.Context)
 }
 
-const pingMongoTimeout = 2 * time.Second
+const (
+	pingMongoTimeout    = 2 * time.Second
+	statusLookupTimeout = 2 * time.Second
+	statusCountTimeout  = 2 * time.Second
+)
 
 var (
 	defaultAllowedUpdates = bot.AllowedUpdates{
@@ -55,10 +61,23 @@ type MongoChecker interface {
 	Ping(ctx context.Context) error
 }
 
+// UserFetcher retrieves users for permission checks.
+type UserFetcher interface {
+	GetByID(ctx context.Context, userID int64) (domain.User, error)
+}
+
+// StatsProvider exposes simple collection counts for diagnostics.
+type StatsProvider interface {
+	CountUsers(ctx context.Context) (int64, error)
+	CountGroups(ctx context.Context) (int64, error)
+}
+
 type commandDiagnostics struct {
-	appEnv       string
-	processStart time.Time
-	mongoChecker MongoChecker
+	appEnv        string
+	processStart  time.Time
+	mongoChecker  MongoChecker
+	userFetcher   UserFetcher
+	statsProvider StatsProvider
 }
 
 type clientOptions struct {
@@ -66,6 +85,8 @@ type clientOptions struct {
 	groupRegistrar GroupRegistrar
 	mongoChecker   MongoChecker
 	processStart   time.Time
+	userFetcher    UserFetcher
+	statsProvider  StatsProvider
 }
 
 // ClientOption configures optional Telegram client dependencies.
@@ -99,6 +120,20 @@ func WithProcessStart(start time.Time) ClientOption {
 	}
 }
 
+// WithUserFetcher supplies a user reader for permission checks.
+func WithUserFetcher(fetcher UserFetcher) ClientOption {
+	return func(opts *clientOptions) {
+		opts.userFetcher = fetcher
+	}
+}
+
+// WithStatsProvider supplies a diagnostics provider for live collection counts.
+func WithStatsProvider(provider StatsProvider) ClientOption {
+	return func(opts *clientOptions) {
+		opts.statsProvider = provider
+	}
+}
+
 // Client wraps the Telegram bot instance and logging dependencies.
 type Client struct {
 	bot    botRunner
@@ -122,9 +157,11 @@ func NewClient(cfg config.Config, logger *logrus.Entry, opts ...ClientOption) (*
 	}
 
 	diag := normalizeDiagnostics(commandDiagnostics{
-		appEnv:       cfg.AppEnv,
-		processStart: clientOpts.processStart,
-		mongoChecker: clientOpts.mongoChecker,
+		appEnv:        cfg.AppEnv,
+		processStart:  clientOpts.processStart,
+		mongoChecker:  clientOpts.mongoChecker,
+		userFetcher:   clientOpts.userFetcher,
+		statsProvider: clientOpts.statsProvider,
 	})
 
 	tgBot, err := createBot(cfg.TelegramToken,
@@ -201,6 +238,10 @@ func newMessageRouter(logger *logrus.Entry, botOwnerID int64, diag commandDiagno
 			"ping": {
 				name:    "command_ping",
 				handler: pingCommandHandler(logger, diag),
+			},
+			"status": {
+				name:    "command_status",
+				handler: statusCommandHandler(logger, botOwnerID, diag),
 			},
 		},
 		unknownHandler: registeredHandler{
@@ -628,6 +669,220 @@ func pingMessage(appEnv string, uptime time.Duration, mongoStatus string) string
 		fmt.Sprintf("env: %s", env),
 		fmt.Sprintf("uptime: %s", uptime),
 		fmt.Sprintf("mongo: %s", mongo),
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+type statusCounts struct {
+	users  string
+	groups string
+}
+
+func statusCommandHandler(logger *logrus.Entry, botOwnerID int64, diag commandDiagnostics) bot.HandlerFunc {
+	if logger == nil {
+		logger = logging.Logger()
+	}
+	diag = normalizeDiagnostics(diag)
+
+	return func(ctx context.Context, b *bot.Bot, update *models.Update) {
+		if ctx == nil || update == nil {
+			return
+		}
+
+		meta := extractUpdateMeta(update)
+		logCommandHandled(logger, "command_status", meta)
+
+		if meta.chatID == 0 {
+			logger.WithFields(logging.Fields{
+				"event":     "command_status_send_failed",
+				"user_id":   meta.userID,
+				"chat_type": normalizeChatType(meta.chatType),
+			}).Error("cannot send status response without chat_id")
+			return
+		}
+
+		role := ""
+		authorized := false
+
+		if meta.userID == 0 {
+			logger.WithFields(logging.Fields{
+				"event":     "command_status_denied",
+				"reason":    "missing_user_id",
+				"chat_id":   meta.chatID,
+				"chat_type": normalizeChatType(meta.chatType),
+			}).Warn("status command denied due to missing user_id")
+		} else if diag.userFetcher == nil {
+			logger.WithFields(logging.Fields{
+				"event":     "command_status_user_lookup_missing",
+				"user_id":   meta.userID,
+				"chat_id":   meta.chatID,
+				"chat_type": normalizeChatType(meta.chatType),
+			}).Error("status command missing user fetcher")
+		} else {
+			authCtx, cancel := context.WithTimeout(ctx, statusLookupTimeout)
+			user, err := diag.userFetcher.GetByID(authCtx, meta.userID)
+			cancel()
+
+			if err != nil {
+				logger.WithFields(logging.Fields{
+					"event":     "command_status_user_lookup_failed",
+					"user_id":   meta.userID,
+					"chat_id":   meta.chatID,
+					"chat_type": normalizeChatType(meta.chatType),
+				}).WithError(err).Error("failed to load user for status command")
+			} else {
+				role = strings.TrimSpace(user.Role)
+				if meta.userID == botOwnerID && domain.RolePriority(role) >= domain.RolePriorityOwner {
+					authorized = true
+				}
+			}
+		}
+
+		if !authorized {
+			if b == nil {
+				logger.WithFields(logging.Fields{
+					"event":     "command_status_send_failed",
+					"user_id":   meta.userID,
+					"chat_id":   meta.chatID,
+					"chat_type": normalizeChatType(meta.chatType),
+					"role":      role,
+				}).Error("cannot send permission denied response without telegram client")
+				return
+			}
+
+			if _, err := sendMessage(ctx, b, &bot.SendMessageParams{
+				ChatID: meta.chatID,
+				Text:   "permission denied",
+			}); err != nil {
+				logger.WithFields(logging.Fields{
+					"event":     "command_status_send_failed",
+					"user_id":   meta.userID,
+					"chat_id":   meta.chatID,
+					"chat_type": normalizeChatType(meta.chatType),
+					"role":      role,
+				}).WithError(err).Error("failed to send permission denied response")
+				return
+			}
+
+			logger.WithFields(logging.Fields{
+				"event":     "command_status_denied",
+				"user_id":   meta.userID,
+				"chat_id":   meta.chatID,
+				"chat_type": normalizeChatType(meta.chatType),
+				"role":      role,
+			}).Info("status command denied")
+			return
+		}
+
+		counts := statusCounts{
+			users:  "error",
+			groups: "error",
+		}
+
+		if diag.statsProvider == nil {
+			logger.WithFields(logging.Fields{
+				"event":     "command_status_stats_missing",
+				"user_id":   meta.userID,
+				"chat_id":   meta.chatID,
+				"chat_type": normalizeChatType(meta.chatType),
+				"role":      role,
+			}).Error("status command missing stats provider")
+		} else {
+			statsCtx, cancel := context.WithTimeout(ctx, statusCountTimeout)
+			userCount, userErr := diag.statsProvider.CountUsers(statsCtx)
+			groupCount, groupErr := diag.statsProvider.CountGroups(statsCtx)
+			cancel()
+
+			if userErr != nil {
+				logger.WithFields(logging.Fields{
+					"event":     "command_status_user_count_error",
+					"user_id":   meta.userID,
+					"chat_id":   meta.chatID,
+					"chat_type": normalizeChatType(meta.chatType),
+					"role":      role,
+				}).WithError(userErr).Error("failed to count users for /status")
+			} else {
+				counts.users = strconv.FormatInt(userCount, 10)
+			}
+
+			if groupErr != nil {
+				logger.WithFields(logging.Fields{
+					"event":     "command_status_group_count_error",
+					"user_id":   meta.userID,
+					"chat_id":   meta.chatID,
+					"chat_type": normalizeChatType(meta.chatType),
+					"role":      role,
+				}).WithError(groupErr).Error("failed to count groups for /status")
+			} else {
+				counts.groups = strconv.FormatInt(groupCount, 10)
+			}
+		}
+
+		messageText := statusMessage(diag.appEnv, counts)
+
+		if b == nil {
+			logger.WithFields(logging.Fields{
+				"event":     "command_status_send_failed",
+				"user_id":   meta.userID,
+				"chat_id":   meta.chatID,
+				"chat_type": normalizeChatType(meta.chatType),
+				"role":      role,
+				"users":     counts.users,
+				"groups":    counts.groups,
+			}).Error("cannot send status response without telegram client")
+			return
+		}
+
+		if _, err := sendMessage(ctx, b, &bot.SendMessageParams{
+			ChatID: meta.chatID,
+			Text:   messageText,
+		}); err != nil {
+			logger.WithFields(logging.Fields{
+				"event":     "command_status_send_failed",
+				"user_id":   meta.userID,
+				"chat_id":   meta.chatID,
+				"chat_type": normalizeChatType(meta.chatType),
+				"role":      role,
+				"users":     counts.users,
+				"groups":    counts.groups,
+			}).WithError(err).Error("failed to send status response")
+			return
+		}
+
+		logger.WithFields(logging.Fields{
+			"event":     "command_status_sent",
+			"user_id":   meta.userID,
+			"chat_id":   meta.chatID,
+			"chat_type": normalizeChatType(meta.chatType),
+			"role":      role,
+			"users":     counts.users,
+			"groups":    counts.groups,
+		}).Info("sent status response")
+	}
+}
+
+func statusMessage(appEnv string, counts statusCounts) string {
+	env := strings.TrimSpace(appEnv)
+	if env == "" {
+		env = config.DefaultAppEnv
+	}
+
+	userCount := strings.TrimSpace(counts.users)
+	if userCount == "" {
+		userCount = "error"
+	}
+
+	groupCount := strings.TrimSpace(counts.groups)
+	if groupCount == "" {
+		groupCount = "error"
+	}
+
+	lines := []string{
+		"bot_status: running",
+		fmt.Sprintf("env: %s", env),
+		fmt.Sprintf("connected_chats: %s", groupCount),
+		fmt.Sprintf("registered_users: %s", userCount),
 	}
 
 	return strings.Join(lines, "\n")

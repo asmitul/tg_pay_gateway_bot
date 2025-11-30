@@ -45,6 +45,10 @@
 - `store.Manager` exposes `Ping(ctx)` to verify Mongo connectivity and wraps failures for caller-friendly errors.
 - `/ping` command replies with `pong`, `env`, `uptime` (derived from process start time), and `mongo: ok|error`; Mongo ping uses a 2s timeout and logs failures but still responds to the user.
 
+## Permissions & Admin Commands
+- Owner-only commands validate the Mongo-backed user role and require the `BOT_OWNER` id; unauthorized users receive a short “permission denied” reply with audit logs.
+- `/status` (owner only) returns `bot_status: running`, `env`, `connected_chats`, and `registered_users` from live Mongo counts; count failures are logged and surface `error` placeholders while still responding.
+
 ## Local Development Stack
 - `docker-compose.local.yml` provides MongoDB 6.0 for development (no auth, bound to 0.0.0.0:27017) with a persistent `mongo_data` volume.
 - Default database `tg_bot_dev` is set via `MONGO_INITDB_DATABASE`; production deployments must enable credentials and use `tg_bot` (pattern `tg_bot_{APP_ENV}` is acceptable).
