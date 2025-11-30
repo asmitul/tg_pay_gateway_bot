@@ -31,6 +31,10 @@ var (
 	createBot = func(token string, options ...bot.Option) (botRunner, error) {
 		return bot.New(token, options...)
 	}
+
+	sendMessage = func(ctx context.Context, b *bot.Bot, params *bot.SendMessageParams) (*models.Message, error) {
+		return b.SendMessage(ctx, params)
+	}
 )
 
 // UserRegistrar ensures users are persisted and tracked when updates arrive.
@@ -89,7 +93,7 @@ func NewClient(cfg config.Config, logger *logrus.Entry, opts ...ClientOption) (*
 
 	tgBot, err := createBot(cfg.TelegramToken,
 		bot.WithAllowedUpdates(defaultAllowedUpdates),
-		bot.WithDefaultHandler(defaultHandler(logger, clientOpts.userRegistrar, clientOpts.groupRegistrar)),
+		bot.WithDefaultHandler(defaultHandler(logger, clientOpts.userRegistrar, clientOpts.groupRegistrar, cfg.BotOwnerID)),
 		bot.WithErrorsHandler(errorHandler(logger)),
 	)
 	if err != nil {
@@ -139,13 +143,13 @@ type messageRouter struct {
 	genericHandler  registeredHandler
 }
 
-func newMessageRouter(logger *logrus.Entry) *messageRouter {
+func newMessageRouter(logger *logrus.Entry, botOwnerID int64) *messageRouter {
 	return &messageRouter{
 		logger: logger,
 		commandHandlers: map[string]registeredHandler{
 			"start": {
 				name:    "command_start",
-				handler: commandLoggerHandler(logger, "command_start"),
+				handler: startCommandHandler(logger, botOwnerID),
 			},
 		},
 		unknownHandler: registeredHandler{
@@ -204,12 +208,12 @@ func (r *messageRouter) logRoute(meta updateMeta, chatType, handlerName, route, 
 	r.logger.WithFields(fields).Info("routed update")
 }
 
-func defaultHandler(logger *logrus.Entry, userRegistrar UserRegistrar, groupRegistrar GroupRegistrar) bot.HandlerFunc {
+func defaultHandler(logger *logrus.Entry, userRegistrar UserRegistrar, groupRegistrar GroupRegistrar, botOwnerID int64) bot.HandlerFunc {
 	if logger == nil {
 		logger = logging.Logger()
 	}
 
-	router := newMessageRouter(logger)
+	router := newMessageRouter(logger, botOwnerID)
 
 	return func(ctx context.Context, b *bot.Bot, update *models.Update) {
 		if update == nil {
@@ -453,6 +457,107 @@ func primaryMessage(update *models.Update) *models.Message {
 	}
 }
 
+func logCommandHandled(logger *logrus.Entry, handlerName string, meta updateMeta) {
+	fields := logging.Fields{
+		"event":     "command_handler",
+		"handler":   handlerName,
+		"chat_type": normalizeChatType(meta.chatType),
+	}
+
+	if meta.userID != 0 {
+		fields["user_id"] = meta.userID
+	}
+	if meta.chatID != 0 {
+		fields["chat_id"] = meta.chatID
+	}
+	if meta.text != "" {
+		fields["text"] = meta.text
+	}
+
+	logger.WithFields(fields).Info("handled command")
+}
+
+func startCommandHandler(logger *logrus.Entry, botOwnerID int64) bot.HandlerFunc {
+	if logger == nil {
+		logger = logging.Logger()
+	}
+
+	return func(ctx context.Context, b *bot.Bot, update *models.Update) {
+		if ctx == nil || update == nil {
+			return
+		}
+
+		meta := extractUpdateMeta(update)
+		logCommandHandled(logger, "command_start", meta)
+
+		chatType := normalizeChatType(meta.chatType)
+
+		if chatType != "private" {
+			logger.WithFields(logging.Fields{
+				"event":     "command_start_ignored",
+				"chat_type": chatType,
+				"user_id":   meta.userID,
+				"chat_id":   meta.chatID,
+			}).Info("ignored /start outside private chat")
+			return
+		}
+
+		if meta.chatID == 0 {
+			logger.WithFields(logging.Fields{
+				"event":   "command_start_send_failed",
+				"user_id": meta.userID,
+				"chat_id": meta.chatID,
+			}).Error("cannot send start response without chat_id")
+			return
+		}
+
+		messageText := startMessage(meta.userID, botOwnerID)
+
+		if b == nil {
+			logger.WithFields(logging.Fields{
+				"event":   "command_start_send_failed",
+				"user_id": meta.userID,
+				"chat_id": meta.chatID,
+			}).Error("cannot send start response without telegram client")
+			return
+		}
+
+		if _, err := sendMessage(ctx, b, &bot.SendMessageParams{
+			ChatID: meta.chatID,
+			Text:   messageText,
+		}); err != nil {
+			logger.WithFields(logging.Fields{
+				"event":   "command_start_send_failed",
+				"user_id": meta.userID,
+				"chat_id": meta.chatID,
+			}).WithError(err).Error("failed to send start response")
+			return
+		}
+
+		logger.WithFields(logging.Fields{
+			"event":   "command_start_sent",
+			"user_id": meta.userID,
+			"chat_id": meta.chatID,
+		}).Info("sent start response")
+	}
+}
+
+func startMessage(userID, botOwnerID int64) string {
+	role := "user"
+	if userID != 0 && userID == botOwnerID {
+		role = "owner"
+	}
+
+	lines := []string{
+		"Welcome to the Telegram payment bot (base build).",
+		"User registration and chat tracking are enabled; payment flows and dashboards will arrive later.",
+		fmt.Sprintf("Your role: %s", role),
+		"Status: registered",
+	}
+
+	return strings.Join(lines, "\n")
+}
+
 func commandLoggerHandler(logger *logrus.Entry, handlerName string) bot.HandlerFunc {
 	if logger == nil {
 		logger = logging.Logger()
@@ -465,23 +570,7 @@ func commandLoggerHandler(logger *logrus.Entry, handlerName string) bot.HandlerF
 
 		meta := extractUpdateMeta(update)
 
-		fields := logging.Fields{
-			"event":     "command_handler",
-			"handler":   handlerName,
-			"chat_type": normalizeChatType(meta.chatType),
-		}
-
-		if meta.userID != 0 {
-			fields["user_id"] = meta.userID
-		}
-		if meta.chatID != 0 {
-			fields["chat_id"] = meta.chatID
-		}
-		if meta.text != "" {
-			fields["text"] = meta.text
-		}
-
-		logger.WithFields(fields).Info("handled command")
+		logCommandHandled(logger, handlerName, meta)
 	}
 }
 

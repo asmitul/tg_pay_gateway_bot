@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 	"testing"
 
 	"github.com/go-telegram/bot"
@@ -186,7 +187,7 @@ func TestExtractUpdateMeta(t *testing.T) {
 
 func TestDefaultHandlerLogsUpdate(t *testing.T) {
 	hookLogger, hook := logtest.NewNullLogger()
-	handler := defaultHandler(logrus.NewEntry(hookLogger), nil, nil)
+	handler := defaultHandler(logrus.NewEntry(hookLogger), nil, nil, 0)
 
 	update := &models.Update{
 		Message: &models.Message{
@@ -230,7 +231,7 @@ func TestDefaultHandlerLogsUpdate(t *testing.T) {
 func TestDefaultHandlerRegistersUser(t *testing.T) {
 	hookLogger, hook := logtest.NewNullLogger()
 	registrar := &stubUserRegistrar{}
-	handler := defaultHandler(logrus.NewEntry(hookLogger), registrar, nil)
+	handler := defaultHandler(logrus.NewEntry(hookLogger), registrar, nil, 0)
 
 	update := &models.Update{
 		Message: &models.Message{
@@ -251,10 +252,30 @@ func TestDefaultHandlerRegistersUser(t *testing.T) {
 	}
 }
 
+func TestDefaultHandlerRegistersUserOnStartCommand(t *testing.T) {
+	hookLogger, _ := logtest.NewNullLogger()
+	registrar := &stubUserRegistrar{}
+	handler := defaultHandler(logrus.NewEntry(hookLogger), registrar, nil, 0)
+
+	update := &models.Update{
+		Message: &models.Message{
+			From: &models.User{ID: 67},
+			Chat: models.Chat{ID: 167, Type: models.ChatTypePrivate},
+			Text: "/start",
+		},
+	}
+
+	handler(context.Background(), nil, update)
+
+	if len(registrar.calls) != 1 || registrar.calls[0] != 67 {
+		t.Fatalf("expected registrar to be called once for /start, got %v", registrar.calls)
+	}
+}
+
 func TestDefaultHandlerLogsRegistrationErrors(t *testing.T) {
 	hookLogger, hook := logtest.NewNullLogger()
 	registrar := &stubUserRegistrar{err: errors.New("boom")}
-	handler := defaultHandler(logrus.NewEntry(hookLogger), registrar, nil)
+	handler := defaultHandler(logrus.NewEntry(hookLogger), registrar, nil, 0)
 
 	update := &models.Update{
 		Message: &models.Message{
@@ -281,7 +302,7 @@ func TestDefaultHandlerLogsRegistrationErrors(t *testing.T) {
 func TestDefaultHandlerRegistersGroup(t *testing.T) {
 	hookLogger, hook := logtest.NewNullLogger()
 	groupRegistrar := &stubGroupRegistrar{}
-	handler := defaultHandler(logrus.NewEntry(hookLogger), nil, groupRegistrar)
+	handler := defaultHandler(logrus.NewEntry(hookLogger), nil, groupRegistrar, 0)
 
 	update := &models.Update{
 		Message: &models.Message{
@@ -313,7 +334,7 @@ func TestDefaultHandlerRegistersGroup(t *testing.T) {
 func TestDefaultHandlerLogsGroupRegistrationErrors(t *testing.T) {
 	hookLogger, hook := logtest.NewNullLogger()
 	groupRegistrar := &stubGroupRegistrar{err: errors.New("boom")}
-	handler := defaultHandler(logrus.NewEntry(hookLogger), nil, groupRegistrar)
+	handler := defaultHandler(logrus.NewEntry(hookLogger), nil, groupRegistrar, 0)
 
 	update := &models.Update{
 		Message: &models.Message{
@@ -340,7 +361,7 @@ func TestDefaultHandlerLogsGroupRegistrationErrors(t *testing.T) {
 func TestDefaultHandlerSkipsGroupRegistrationForPrivateChats(t *testing.T) {
 	hookLogger, _ := logtest.NewNullLogger()
 	groupRegistrar := &stubGroupRegistrar{}
-	handler := defaultHandler(logrus.NewEntry(hookLogger), nil, groupRegistrar)
+	handler := defaultHandler(logrus.NewEntry(hookLogger), nil, groupRegistrar, 0)
 
 	update := &models.Update{
 		Message: &models.Message{
@@ -359,7 +380,7 @@ func TestDefaultHandlerSkipsGroupRegistrationForPrivateChats(t *testing.T) {
 
 func TestDefaultHandlerRoutesStartCommand(t *testing.T) {
 	hookLogger, hook := logtest.NewNullLogger()
-	handler := defaultHandler(logrus.NewEntry(hookLogger), nil, nil)
+	handler := defaultHandler(logrus.NewEntry(hookLogger), nil, nil, 0)
 
 	update := &models.Update{
 		Message: &models.Message{
@@ -399,9 +420,85 @@ func TestDefaultHandlerRoutesStartCommand(t *testing.T) {
 	}
 }
 
+func TestStartCommandRepliesInPrivateChat(t *testing.T) {
+	hookLogger, hook := logtest.NewNullLogger()
+
+	origSendMessage := sendMessage
+	defer func() { sendMessage = origSendMessage }()
+
+	var sentParams *bot.SendMessageParams
+	sendMessage = func(ctx context.Context, b *bot.Bot, params *bot.SendMessageParams) (*models.Message, error) {
+		sentParams = params
+		return &models.Message{}, nil
+	}
+
+	handler := startCommandHandler(logrus.NewEntry(hookLogger), 42)
+
+	update := &models.Update{
+		Message: &models.Message{
+			From: &models.User{ID: 42},
+			Chat: models.Chat{ID: 200, Type: models.ChatTypePrivate},
+			Text: "/start",
+		},
+	}
+
+	handler(context.Background(), &bot.Bot{}, update)
+
+	if sentParams == nil {
+		t.Fatalf("expected start command to send a message")
+	}
+	if sentParams.ChatID != int64(200) {
+		t.Fatalf("expected start message to be sent to chat 200, got %v", sentParams.ChatID)
+	}
+	if !strings.Contains(sentParams.Text, "base build") {
+		t.Fatalf("expected welcome text to mention base build, got %q", sentParams.Text)
+	}
+	if !strings.Contains(sentParams.Text, "role: owner") {
+		t.Fatalf("expected welcome text to include owner role, got %q", sentParams.Text)
+	}
+	if !strings.Contains(sentParams.Text, "Status: registered") {
+		t.Fatalf("expected welcome text to include registration status, got %q", sentParams.Text)
+	}
+
+	if findEvent(hook.AllEntries(), "command_start_sent") == nil {
+		t.Fatalf("expected command_start_sent log entry")
+	}
+}
+
+func TestStartCommandIgnoredInGroup(t *testing.T) {
+	hookLogger, hook := logtest.NewNullLogger()
+
+	origSendMessage := sendMessage
+	defer func() { sendMessage = origSendMessage }()
+
+	sendMessage = func(ctx context.Context, b *bot.Bot, params *bot.SendMessageParams) (*models.Message, error) {
+		t.Fatalf("expected no message send for group /start")
+		return nil, nil
+	}
+
+	handler := startCommandHandler(logrus.NewEntry(hookLogger), 0)
+
+	update := &models.Update{
+		Message: &models.Message{
+			From: &models.User{ID: 43},
+			Chat: models.Chat{ID: -300, Type: models.ChatTypeGroup},
+			Text: "/start",
+		},
+	}
+
+	handler(context.Background(), &bot.Bot{}, update)
+
+	if findEvent(hook.AllEntries(), "command_start_ignored") == nil {
+		t.Fatalf("expected command_start_ignored log entry")
+	}
+	if findEvent(hook.AllEntries(), "command_start_sent") != nil {
+		t.Fatalf("expected no command_start_sent log entry for group chat")
+	}
+}
+
 func TestDefaultHandlerRoutesUnknownCommandInGroup(t *testing.T) {
 	hookLogger, hook := logtest.NewNullLogger()
-	handler := defaultHandler(logrus.NewEntry(hookLogger), nil, nil)
+	handler := defaultHandler(logrus.NewEntry(hookLogger), nil, nil, 0)
 
 	update := &models.Update{
 		Message: &models.Message{
@@ -436,7 +533,7 @@ func TestDefaultHandlerRoutesUnknownCommandInGroup(t *testing.T) {
 
 func TestDefaultHandlerRoutesGenericMessage(t *testing.T) {
 	hookLogger, hook := logtest.NewNullLogger()
-	handler := defaultHandler(logrus.NewEntry(hookLogger), nil, nil)
+	handler := defaultHandler(logrus.NewEntry(hookLogger), nil, nil, 0)
 
 	update := &models.Update{
 		Message: &models.Message{

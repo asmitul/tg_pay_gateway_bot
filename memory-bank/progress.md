@@ -1,3 +1,6 @@
+## 2025-11-30
+- Completed Implementation Plan Step 18: implemented `/start` command replying in private chats with a base-build welcome, role hint (owner vs user from configured BOT_OWNER), and registered status; ignored in groups with structured logs only; added handler wiring to include owner ID; expanded tests for /start replies and user registration on start; `go test ./...` passing.
+
 ## 2025-11-26
 - Completed Implementation Plan Step 17: added group registrar to upsert group chats with joined/last seen timestamps and trimmed titles, wired Telegram default handler to register groups on group/supergroup updates with error logging, and added unit tests; `go test ./...` passing.
 - Completed Implementation Plan Step 16: added user registrar that upserts new users with default `role=user`, tracks `last_seen_at`/`updated_at` on every update, wired Telegram default handler to invoke it for all updates with `user_id`, and extended the user domain model to persist `last_seen_at`; `go test ./...` passing.
