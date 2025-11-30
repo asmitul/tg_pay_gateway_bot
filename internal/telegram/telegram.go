@@ -38,8 +38,14 @@ type UserRegistrar interface {
 	EnsureUser(ctx context.Context, userID int64) (bool, error)
 }
 
+// GroupRegistrar ensures groups are persisted when the bot encounters them.
+type GroupRegistrar interface {
+	EnsureGroup(ctx context.Context, chatID int64, title string) (bool, error)
+}
+
 type clientOptions struct {
-	userRegistrar UserRegistrar
+	userRegistrar  UserRegistrar
+	groupRegistrar GroupRegistrar
 }
 
 // ClientOption configures optional Telegram client dependencies.
@@ -49,6 +55,13 @@ type ClientOption func(*clientOptions)
 func WithUserRegistrar(registrar UserRegistrar) ClientOption {
 	return func(opts *clientOptions) {
 		opts.userRegistrar = registrar
+	}
+}
+
+// WithGroupRegistrar wires a group registration hook that runs on group updates.
+func WithGroupRegistrar(registrar GroupRegistrar) ClientOption {
+	return func(opts *clientOptions) {
+		opts.groupRegistrar = registrar
 	}
 }
 
@@ -76,7 +89,7 @@ func NewClient(cfg config.Config, logger *logrus.Entry, opts ...ClientOption) (*
 
 	tgBot, err := createBot(cfg.TelegramToken,
 		bot.WithAllowedUpdates(defaultAllowedUpdates),
-		bot.WithDefaultHandler(defaultHandler(logger, clientOpts.userRegistrar)),
+		bot.WithDefaultHandler(defaultHandler(logger, clientOpts.userRegistrar, clientOpts.groupRegistrar)),
 		bot.WithErrorsHandler(errorHandler(logger)),
 	)
 	if err != nil {
@@ -111,6 +124,7 @@ type updateMeta struct {
 	text       string
 	updateType string
 	chatType   string
+	chatTitle  string
 }
 
 type registeredHandler struct {
@@ -190,7 +204,7 @@ func (r *messageRouter) logRoute(meta updateMeta, chatType, handlerName, route, 
 	r.logger.WithFields(fields).Info("routed update")
 }
 
-func defaultHandler(logger *logrus.Entry, registrar UserRegistrar) bot.HandlerFunc {
+func defaultHandler(logger *logrus.Entry, userRegistrar UserRegistrar, groupRegistrar GroupRegistrar) bot.HandlerFunc {
 	if logger == nil {
 		logger = logging.Logger()
 	}
@@ -208,13 +222,25 @@ func defaultHandler(logger *logrus.Entry, registrar UserRegistrar) bot.HandlerFu
 
 		meta := extractUpdateMeta(update)
 
-		if registrar != nil && meta.userID != 0 {
-			if _, err := registrar.EnsureUser(ctx, meta.userID); err != nil {
+		normalizedChatType := normalizeChatType(meta.chatType)
+
+		if userRegistrar != nil && meta.userID != 0 {
+			if _, err := userRegistrar.EnsureUser(ctx, meta.userID); err != nil {
 				logger.WithFields(logging.Fields{
 					"event":   "user_registration_failed",
 					"user_id": meta.userID,
 					"chat_id": meta.chatID,
 				}).WithError(err).Error("failed to ensure user registration")
+			}
+		}
+
+		if groupRegistrar != nil && meta.chatID != 0 && normalizedChatType == "group" {
+			if _, err := groupRegistrar.EnsureGroup(ctx, meta.chatID, meta.chatTitle); err != nil {
+				logger.WithFields(logging.Fields{
+					"event":      "group_registration_failed",
+					"chat_id":    meta.chatID,
+					"chat_title": meta.chatTitle,
+				}).WithError(err).Error("failed to ensure group registration")
 			}
 		}
 
@@ -233,7 +259,7 @@ func defaultHandler(logger *logrus.Entry, registrar UserRegistrar) bot.HandlerFu
 			fields["chat_id"] = meta.chatID
 		}
 		if meta.chatType != "" {
-			fields["chat_type"] = normalizeChatType(meta.chatType)
+			fields["chat_type"] = normalizedChatType
 		}
 
 		logger.WithFields(fields).Info("telegram update received")
@@ -249,6 +275,7 @@ func extractUpdateMeta(update *models.Update) updateMeta {
 			userID:     userID(update.Message.From),
 			chatID:     chatID(&update.Message.Chat),
 			text:       strings.TrimSpace(update.Message.Text),
+			chatTitle:  chatTitle(&update.Message.Chat),
 			chatType:   string(update.Message.Chat.Type),
 			updateType: "message",
 		}
@@ -257,6 +284,7 @@ func extractUpdateMeta(update *models.Update) updateMeta {
 			userID:     userID(update.EditedMessage.From),
 			chatID:     chatID(&update.EditedMessage.Chat),
 			text:       strings.TrimSpace(update.EditedMessage.Text),
+			chatTitle:  chatTitle(&update.EditedMessage.Chat),
 			chatType:   string(update.EditedMessage.Chat.Type),
 			updateType: "edited_message",
 		}
@@ -265,6 +293,7 @@ func extractUpdateMeta(update *models.Update) updateMeta {
 			userID:     userID(&update.CallbackQuery.From),
 			chatID:     messageChatID(update.CallbackQuery.Message),
 			text:       strings.TrimSpace(update.CallbackQuery.Data),
+			chatTitle:  messageChatTitle(update.CallbackQuery.Message),
 			chatType:   messageChatType(update.CallbackQuery.Message),
 			updateType: "callback_query",
 		}
@@ -272,6 +301,7 @@ func extractUpdateMeta(update *models.Update) updateMeta {
 		return updateMeta{
 			userID:     userID(&update.MyChatMember.From),
 			chatID:     chatID(&update.MyChatMember.Chat),
+			chatTitle:  chatTitle(&update.MyChatMember.Chat),
 			chatType:   string(update.MyChatMember.Chat.Type),
 			updateType: "my_chat_member",
 		}
@@ -279,6 +309,7 @@ func extractUpdateMeta(update *models.Update) updateMeta {
 		return updateMeta{
 			userID:     userID(&update.ChatMember.From),
 			chatID:     chatID(&update.ChatMember.Chat),
+			chatTitle:  chatTitle(&update.ChatMember.Chat),
 			chatType:   string(update.ChatMember.Chat.Type),
 			updateType: "chat_member",
 		}
@@ -317,6 +348,14 @@ func chatID(chat *models.Chat) int64 {
 	return chat.ID
 }
 
+func chatTitle(chat *models.Chat) string {
+	if chat == nil {
+		return ""
+	}
+
+	return strings.TrimSpace(chat.Title)
+}
+
 func messageChatID(msg models.MaybeInaccessibleMessage) int64 {
 	switch msg.Type {
 	case models.MaybeInaccessibleMessageTypeMessage:
@@ -346,6 +385,23 @@ func messageChatType(msg models.MaybeInaccessibleMessage) string {
 			return ""
 		}
 		return string(msg.InaccessibleMessage.Chat.Type)
+	default:
+		return ""
+	}
+}
+
+func messageChatTitle(msg models.MaybeInaccessibleMessage) string {
+	switch msg.Type {
+	case models.MaybeInaccessibleMessageTypeMessage:
+		if msg.Message == nil {
+			return ""
+		}
+		return chatTitle(&msg.Message.Chat)
+	case models.MaybeInaccessibleMessageTypeInaccessibleMessage:
+		if msg.InaccessibleMessage == nil {
+			return ""
+		}
+		return chatTitle(&msg.InaccessibleMessage.Chat)
 	default:
 		return ""
 	}

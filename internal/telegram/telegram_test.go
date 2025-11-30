@@ -117,18 +117,18 @@ func TestExtractUpdateMeta(t *testing.T) {
 					Text: " hello ",
 				},
 			},
-			want: updateMeta{userID: 10, chatID: 20, text: "hello", updateType: "message", chatType: string(models.ChatTypePrivate)},
+			want: updateMeta{userID: 10, chatID: 20, text: "hello", updateType: "message", chatType: string(models.ChatTypePrivate), chatTitle: ""},
 		},
 		{
 			name: "edited message",
 			update: &models.Update{
 				EditedMessage: &models.Message{
 					From: &models.User{ID: 11},
-					Chat: models.Chat{ID: 21, Type: models.ChatTypeSupergroup},
+					Chat: models.Chat{ID: 21, Type: models.ChatTypeSupergroup, Title: "Super Chat"},
 					Text: "updated",
 				},
 			},
-			want: updateMeta{userID: 11, chatID: 21, text: "updated", updateType: "edited_message", chatType: string(models.ChatTypeSupergroup)},
+			want: updateMeta{userID: 11, chatID: 21, text: "updated", updateType: "edited_message", chatType: string(models.ChatTypeSupergroup), chatTitle: "Super Chat"},
 		},
 		{
 			name: "callback query",
@@ -139,32 +139,32 @@ func TestExtractUpdateMeta(t *testing.T) {
 					Message: models.MaybeInaccessibleMessage{
 						Type: models.MaybeInaccessibleMessageTypeMessage,
 						Message: &models.Message{
-							Chat: models.Chat{ID: 22, Type: models.ChatTypeGroup},
+							Chat: models.Chat{ID: 22, Type: models.ChatTypeGroup, Title: "Callback Group"},
 						},
 					},
 				},
 			},
-			want: updateMeta{userID: 12, chatID: 22, text: "choice", updateType: "callback_query", chatType: string(models.ChatTypeGroup)},
+			want: updateMeta{userID: 12, chatID: 22, text: "choice", updateType: "callback_query", chatType: string(models.ChatTypeGroup), chatTitle: "Callback Group"},
 		},
 		{
 			name: "my chat member",
 			update: &models.Update{
 				MyChatMember: &models.ChatMemberUpdated{
 					From: models.User{ID: 13},
-					Chat: models.Chat{ID: 23, Type: models.ChatTypeGroup},
+					Chat: models.Chat{ID: 23, Type: models.ChatTypeGroup, Title: "My Chat Group"},
 				},
 			},
-			want: updateMeta{userID: 13, chatID: 23, updateType: "my_chat_member", chatType: string(models.ChatTypeGroup)},
+			want: updateMeta{userID: 13, chatID: 23, updateType: "my_chat_member", chatType: string(models.ChatTypeGroup), chatTitle: "My Chat Group"},
 		},
 		{
 			name: "chat member",
 			update: &models.Update{
 				ChatMember: &models.ChatMemberUpdated{
 					From: models.User{ID: 14},
-					Chat: models.Chat{ID: 24, Type: models.ChatTypeGroup},
+					Chat: models.Chat{ID: 24, Type: models.ChatTypeGroup, Title: "Chat Member Group"},
 				},
 			},
-			want: updateMeta{userID: 14, chatID: 24, updateType: "chat_member", chatType: string(models.ChatTypeGroup)},
+			want: updateMeta{userID: 14, chatID: 24, updateType: "chat_member", chatType: string(models.ChatTypeGroup), chatTitle: "Chat Member Group"},
 		},
 		{
 			name:   "unknown",
@@ -177,7 +177,7 @@ func TestExtractUpdateMeta(t *testing.T) {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			got := extractUpdateMeta(tt.update)
-			if got.userID != tt.want.userID || got.chatID != tt.want.chatID || got.text != tt.want.text || got.updateType != tt.want.updateType || got.chatType != tt.want.chatType {
+			if got.userID != tt.want.userID || got.chatID != tt.want.chatID || got.text != tt.want.text || got.updateType != tt.want.updateType || got.chatType != tt.want.chatType || got.chatTitle != tt.want.chatTitle {
 				t.Fatalf("extractUpdateMeta() = %+v, want %+v", got, tt.want)
 			}
 		})
@@ -186,7 +186,7 @@ func TestExtractUpdateMeta(t *testing.T) {
 
 func TestDefaultHandlerLogsUpdate(t *testing.T) {
 	hookLogger, hook := logtest.NewNullLogger()
-	handler := defaultHandler(logrus.NewEntry(hookLogger), nil)
+	handler := defaultHandler(logrus.NewEntry(hookLogger), nil, nil)
 
 	update := &models.Update{
 		Message: &models.Message{
@@ -229,8 +229,8 @@ func TestDefaultHandlerLogsUpdate(t *testing.T) {
 
 func TestDefaultHandlerRegistersUser(t *testing.T) {
 	hookLogger, hook := logtest.NewNullLogger()
-	registrar := &stubRegistrar{}
-	handler := defaultHandler(logrus.NewEntry(hookLogger), registrar)
+	registrar := &stubUserRegistrar{}
+	handler := defaultHandler(logrus.NewEntry(hookLogger), registrar, nil)
 
 	update := &models.Update{
 		Message: &models.Message{
@@ -253,8 +253,8 @@ func TestDefaultHandlerRegistersUser(t *testing.T) {
 
 func TestDefaultHandlerLogsRegistrationErrors(t *testing.T) {
 	hookLogger, hook := logtest.NewNullLogger()
-	registrar := &stubRegistrar{err: errors.New("boom")}
-	handler := defaultHandler(logrus.NewEntry(hookLogger), registrar)
+	registrar := &stubUserRegistrar{err: errors.New("boom")}
+	handler := defaultHandler(logrus.NewEntry(hookLogger), registrar, nil)
 
 	update := &models.Update{
 		Message: &models.Message{
@@ -278,9 +278,88 @@ func TestDefaultHandlerLogsRegistrationErrors(t *testing.T) {
 	}
 }
 
+func TestDefaultHandlerRegistersGroup(t *testing.T) {
+	hookLogger, hook := logtest.NewNullLogger()
+	groupRegistrar := &stubGroupRegistrar{}
+	handler := defaultHandler(logrus.NewEntry(hookLogger), nil, groupRegistrar)
+
+	update := &models.Update{
+		Message: &models.Message{
+			From: &models.User{ID: 88},
+			Chat: models.Chat{ID: -500, Type: models.ChatTypeSupergroup, Title: "My Group Title"},
+			Text: "hello",
+		},
+	}
+
+	handler(context.Background(), nil, update)
+
+	if len(groupRegistrar.calls) != 1 {
+		t.Fatalf("expected group registrar to be called once, got %d calls", len(groupRegistrar.calls))
+	}
+
+	call := groupRegistrar.calls[0]
+	if call.chatID != -500 {
+		t.Fatalf("expected chat_id=-500, got %d", call.chatID)
+	}
+	if call.title != "My Group Title" {
+		t.Fatalf("expected title 'My Group Title', got %q", call.title)
+	}
+
+	if findEvent(hook.AllEntries(), "telegram_update") == nil {
+		t.Fatalf("expected telegram_update log entry")
+	}
+}
+
+func TestDefaultHandlerLogsGroupRegistrationErrors(t *testing.T) {
+	hookLogger, hook := logtest.NewNullLogger()
+	groupRegistrar := &stubGroupRegistrar{err: errors.New("boom")}
+	handler := defaultHandler(logrus.NewEntry(hookLogger), nil, groupRegistrar)
+
+	update := &models.Update{
+		Message: &models.Message{
+			From: &models.User{ID: 89},
+			Chat: models.Chat{ID: -600, Type: models.ChatTypeGroup, Title: "Error Group"},
+			Text: "hi",
+		},
+	}
+
+	handler(context.Background(), nil, update)
+
+	entry := findEvent(hook.AllEntries(), "group_registration_failed")
+	if entry == nil {
+		t.Fatalf("expected group_registration_failed log entry")
+	}
+	if entry.Data["chat_id"] != int64(-600) {
+		t.Fatalf("expected chat_id=-600 in failure log, got %v", entry.Data["chat_id"])
+	}
+	if entry.Data["chat_title"] != "Error Group" {
+		t.Fatalf("expected chat_title=Error Group in failure log, got %v", entry.Data["chat_title"])
+	}
+}
+
+func TestDefaultHandlerSkipsGroupRegistrationForPrivateChats(t *testing.T) {
+	hookLogger, _ := logtest.NewNullLogger()
+	groupRegistrar := &stubGroupRegistrar{}
+	handler := defaultHandler(logrus.NewEntry(hookLogger), nil, groupRegistrar)
+
+	update := &models.Update{
+		Message: &models.Message{
+			From: &models.User{ID: 90},
+			Chat: models.Chat{ID: 190, Type: models.ChatTypePrivate},
+			Text: "hello",
+		},
+	}
+
+	handler(context.Background(), nil, update)
+
+	if len(groupRegistrar.calls) != 0 {
+		t.Fatalf("expected no group registration for private chat, got %d calls", len(groupRegistrar.calls))
+	}
+}
+
 func TestDefaultHandlerRoutesStartCommand(t *testing.T) {
 	hookLogger, hook := logtest.NewNullLogger()
-	handler := defaultHandler(logrus.NewEntry(hookLogger), nil)
+	handler := defaultHandler(logrus.NewEntry(hookLogger), nil, nil)
 
 	update := &models.Update{
 		Message: &models.Message{
@@ -322,7 +401,7 @@ func TestDefaultHandlerRoutesStartCommand(t *testing.T) {
 
 func TestDefaultHandlerRoutesUnknownCommandInGroup(t *testing.T) {
 	hookLogger, hook := logtest.NewNullLogger()
-	handler := defaultHandler(logrus.NewEntry(hookLogger), nil)
+	handler := defaultHandler(logrus.NewEntry(hookLogger), nil, nil)
 
 	update := &models.Update{
 		Message: &models.Message{
@@ -357,7 +436,7 @@ func TestDefaultHandlerRoutesUnknownCommandInGroup(t *testing.T) {
 
 func TestDefaultHandlerRoutesGenericMessage(t *testing.T) {
 	hookLogger, hook := logtest.NewNullLogger()
-	handler := defaultHandler(logrus.NewEntry(hookLogger), nil)
+	handler := defaultHandler(logrus.NewEntry(hookLogger), nil, nil)
 
 	update := &models.Update{
 		Message: &models.Message{
@@ -393,13 +472,28 @@ func TestDefaultHandlerRoutesGenericMessage(t *testing.T) {
 	}
 }
 
-type stubRegistrar struct {
+type stubUserRegistrar struct {
 	calls []int64
 	err   error
 }
 
-func (s *stubRegistrar) EnsureUser(_ context.Context, userID int64) (bool, error) {
+func (s *stubUserRegistrar) EnsureUser(_ context.Context, userID int64) (bool, error) {
 	s.calls = append(s.calls, userID)
+	return false, s.err
+}
+
+type stubGroupRegistrar struct {
+	calls []groupCall
+	err   error
+}
+
+type groupCall struct {
+	chatID int64
+	title  string
+}
+
+func (s *stubGroupRegistrar) EnsureGroup(_ context.Context, chatID int64, title string) (bool, error) {
+	s.calls = append(s.calls, groupCall{chatID: chatID, title: title})
 	return false, s.err
 }
 

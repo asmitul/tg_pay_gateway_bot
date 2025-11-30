@@ -37,6 +37,10 @@
 - `internal/feature/user.Registrar` upserts users on first contact with `role=user`, populating `created_at`/`updated_at`/`last_seen_at`, and refreshes `updated_at`/`last_seen_at` on every subsequent update.
 - The Telegram default handler invokes the registrar for any update carrying a `user_id` before routing; failures log `event=user_registration_failed` with chat/user context while routing continues.
 
+## Group Registration
+- `internal/feature/group.Registrar` upserts groups when the bot sees activity in a group/supergroup chat, setting `joined_at`/`last_seen_at` plus the trimmed chat title on first sight and refreshing `last_seen_at` (and title when provided) on subsequent interactions.
+- The Telegram default handler invokes the registrar for updates in group/supergroup chats; failures log `event=group_registration_failed` with chat context while routing continues.
+
 ## Local Development Stack
 - `docker-compose.local.yml` provides MongoDB 6.0 for development (no auth, bound to 0.0.0.0:27017) with a persistent `mongo_data` volume.
 - Default database `tg_bot_dev` is set via `MONGO_INITDB_DATABASE`; production deployments must enable credentials and use `tg_bot` (pattern `tg_bot_{APP_ENV}` is acceptable).
@@ -44,5 +48,5 @@
 ## Database Schema
 - Base collections created for the bot skeleton:
   - `users`: fields `user_id` (unique), `role`, `created_at`, `updated_at`, `last_seen_at` (updated for each user interaction).
-  - `groups`: fields `chat_id` (unique), `title`, `joined_at`, `last_seen_at` (set to `joined_at` on insert).
+  - `groups`: fields `chat_id` (unique), `title`, `joined_at`, `last_seen_at` (set to `joined_at` on insert and refreshed on each group interaction).
 - Unique indexes are ensured at startup via `store.Manager.EnsureBaseIndexes`: `users.user_id` (`user_id_unique`) and `groups.chat_id` (`chat_id_unique`).
