@@ -20,10 +20,11 @@ import (
 )
 
 const (
-	mongoConnectTimeout    = 10 * time.Second
-	mongoIndexTimeout      = 5 * time.Second
-	mongoDisconnectTimeout = 5 * time.Second
-	ownerBootstrapTimeout  = 5 * time.Second
+	mongoConnectTimeout     = 10 * time.Second
+	mongoIndexTimeout       = 5 * time.Second
+	mongoDisconnectTimeout  = 5 * time.Second
+	ownerBootstrapTimeout   = 5 * time.Second
+	telegramShutdownTimeout = 10 * time.Second
 )
 
 var processStart = time.Now()
@@ -95,18 +96,6 @@ func main() {
 	userRepository := domain.NewUserRepository(mongoManager.Users())
 	statsProvider := store.NewStatsProvider(mongoManager.Users(), mongoManager.Groups())
 
-	defer func() {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), mongoDisconnectTimeout)
-		defer cancel()
-
-		if err := mongoManager.Close(shutdownCtx); err != nil {
-			logger.WithError(err).Error("mongo disconnect error")
-			return
-		}
-
-		logger.WithField("event", "mongo_disconnect").Info("mongo client disconnected")
-	}()
-
 	tgClient, err := telegram.NewClient(cfg, logger,
 		telegram.WithUserRegistrar(userRegistrar),
 		telegram.WithGroupRegistrar(groupRegistrar),
@@ -123,8 +112,41 @@ func main() {
 
 	logger.WithField("event", "telegram_ready").Info("telegram client initialized")
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	tgClient.Start(ctx)
+	telegramCtx, cancelTelegram := context.WithCancel(context.Background())
+	tgDone := make(chan struct{})
+
+	go func() {
+		tgClient.Start(telegramCtx)
+		close(tgDone)
+	}()
+
+	select {
+	case <-signalCtx.Done():
+		logger.WithField("event", "shutdown_signal").Info("received termination signal, stopping telegram polling")
+	case <-tgDone:
+		logger.WithField("event", "telegram_stopped_early").Warn("telegram client stopped before shutdown signal")
+	}
+
+	cancelTelegram()
+
+	waitCtx, cancelWait := context.WithTimeout(context.Background(), telegramShutdownTimeout)
+	select {
+	case <-tgDone:
+	case <-waitCtx.Done():
+		logger.WithField("event", "telegram_shutdown_timeout").Warn("timed out waiting for telegram client to stop")
+	}
+	cancelWait()
+
+	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), mongoDisconnectTimeout)
+	if err := mongoManager.Close(shutdownCtx); err != nil {
+		logger.WithError(err).Error("mongo disconnect error")
+	} else {
+		logger.WithField("event", "mongo_disconnect").Info("mongo client disconnected")
+	}
+	cancelShutdown()
+
+	logger.WithField("event", "shutdown_complete").Info("shutdown complete")
 }

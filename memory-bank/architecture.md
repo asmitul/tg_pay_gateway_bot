@@ -33,6 +33,11 @@
 - Default handler logs update type, user/chat IDs, and text payloads; errors from the poller are logged through the shared logger. User registration runs before routing to ensure user presence/last seen tracking.
 - Process uses `signal.NotifyContext` to stop polling cleanly when receiving termination signals.
 
+## Shutdown Flow
+- Bot listens for `SIGINT`/`SIGTERM` and logs a `shutdown_signal` event when caught; Telegram polling runs on a cancelable background context with a 10s shutdown wait (`telegramShutdownTimeout`) to stop receiving new updates.
+- After polling stops (or the wait times out), MongoDB closes with a 5s timeout (`mongoDisconnectTimeout`) and logs `mongo_disconnect`.
+- Lifecycle ends with a `shutdown_complete` log once resources are closed to document orderly termination.
+
 ## User Registration
 - `internal/feature/user.Registrar` upserts users on first contact with `role=user`, populating `created_at`/`updated_at`/`last_seen_at`, and refreshes `updated_at`/`last_seen_at` on every subsequent update.
 - The Telegram default handler invokes the registrar for any update carrying a `user_id` before routing; failures log `event=user_registration_failed` with chat/user context while routing continues.

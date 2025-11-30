@@ -1,4 +1,5 @@
 ## 2025-11-30
+- Completed Implementation Plan Step 22: implemented graceful shutdown with signal-aware polling stop, a 10s Telegram shutdown wait, Mongo disconnect timeout, and a final shutdown completion log; `go test ./...` passing.
 - Completed Implementation Plan Step 21: added structured per-update logging with Telegram timestamps, handler names, chat/user IDs, and update types, wiring handler selection into the update log; updated metadata extraction helpers and tests; `go test ./...` passing.
 - Completed Implementation Plan Step 20: added owner-only `/status` command that checks the Mongo-backed owner role (BOT_OWNER match) before execution, replies with env and live user/group counts using a stats provider with error fallbacks, and wired new dependencies through Telegram client/main with unit tests; `go test ./...` passing.
 - Completed Implementation Plan Step 19: added `/ping` health command returning env/uptime/Mongo status with a 2s Mongo ping, injected process start time and Mongo checker into Telegram client, exposed store.Manager Ping helper, and expanded tests; `go test ./...` passing.
