@@ -25,6 +25,8 @@ const (
 	ownerBootstrapTimeout  = 5 * time.Second
 )
 
+var processStart = time.Now()
+
 func main() {
 	configOnly := flag.Bool("config-only", false, "load and print configuration then exit")
 	flag.Parse()
@@ -105,6 +107,8 @@ func main() {
 	tgClient, err := telegram.NewClient(cfg, logger,
 		telegram.WithUserRegistrar(userRegistrar),
 		telegram.WithGroupRegistrar(groupRegistrar),
+		telegram.WithMongoChecker(mongoManager),
+		telegram.WithProcessStart(processStart),
 	)
 	if err != nil {
 		logger.WithError(err).Error("telegram client setup error")

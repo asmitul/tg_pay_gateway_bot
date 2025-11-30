@@ -112,6 +112,66 @@ func TestManagerCloseRequiresContext(t *testing.T) {
 	}
 }
 
+func TestManagerPingChecksConnectivity(t *testing.T) {
+	fake := newFakeMongoClient(t)
+	restore := stubConnect(fake, nil)
+	t.Cleanup(restore)
+
+	manager, err := NewManager(context.Background(), config.Config{MongoURI: "mongodb://stub", MongoDB: "tg_bot_test"})
+	if err != nil {
+		t.Fatalf("expected manager to initialize, got error: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	if err := manager.Ping(ctx); err != nil {
+		t.Fatalf("expected ping to succeed, got error: %v", err)
+	}
+
+	if fake.pingCalls < 2 {
+		t.Fatalf("expected ping to be invoked at least twice (init + explicit), got %d", fake.pingCalls)
+	}
+	if fake.lastReadPref != "primary" {
+		t.Fatalf("expected ping to use primary read preference, got %q", fake.lastReadPref)
+	}
+}
+
+func TestManagerPingPropagatesErrors(t *testing.T) {
+	fake := newFakeMongoClient(t)
+	restore := stubConnect(fake, nil)
+	t.Cleanup(restore)
+
+	manager, err := NewManager(context.Background(), config.Config{MongoURI: "mongodb://stub", MongoDB: "tg_bot_test"})
+	if err != nil {
+		t.Fatalf("expected manager to initialize, got error: %v", err)
+	}
+
+	errPing := errors.New("ping failed")
+	fake.pingErr = errPing
+
+	if err := manager.Ping(context.Background()); err == nil {
+		t.Fatalf("expected ping to fail")
+	} else if !errors.Is(err, errPing) {
+		t.Fatalf("expected ping error to wrap ping failed, got %v", err)
+	}
+}
+
+func TestManagerPingValidatesContext(t *testing.T) {
+	fake := newFakeMongoClient(t)
+	restore := stubConnect(fake, nil)
+	t.Cleanup(restore)
+
+	manager, err := NewManager(context.Background(), config.Config{MongoURI: "mongodb://stub", MongoDB: "tg_bot_test"})
+	if err != nil {
+		t.Fatalf("expected manager to initialize, got error: %v", err)
+	}
+
+	if err := manager.Ping(nil); err == nil {
+		t.Fatalf("expected error for nil context")
+	}
+}
+
 func TestEnsureBaseIndexesCreatesUniqueIndexes(t *testing.T) {
 	fake := newFakeMongoClient(t)
 	restoreConnect := stubConnect(fake, nil)
@@ -197,6 +257,8 @@ type fakeMongoClient struct {
 	disconnectErr    error
 	disconnectCalled bool
 	databaseRequests []string
+	pingCalls        int
+	lastReadPref     string
 }
 
 func newFakeMongoClient(t *testing.T) *fakeMongoClient {
@@ -210,7 +272,11 @@ func newFakeMongoClient(t *testing.T) *fakeMongoClient {
 	return &fakeMongoClient{client: client}
 }
 
-func (f *fakeMongoClient) Ping(context.Context, *readpref.ReadPref) error {
+func (f *fakeMongoClient) Ping(_ context.Context, rp *readpref.ReadPref) error {
+	f.pingCalls++
+	if rp != nil {
+		f.lastReadPref = rp.String()
+	}
 	return f.pingErr
 }
 

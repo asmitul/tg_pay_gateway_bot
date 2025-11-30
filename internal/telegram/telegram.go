@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
@@ -18,6 +19,8 @@ import (
 type botRunner interface {
 	Start(ctx context.Context)
 }
+
+const pingMongoTimeout = 2 * time.Second
 
 var (
 	defaultAllowedUpdates = bot.AllowedUpdates{
@@ -47,9 +50,22 @@ type GroupRegistrar interface {
 	EnsureGroup(ctx context.Context, chatID int64, title string) (bool, error)
 }
 
+// MongoChecker allows health checks against MongoDB.
+type MongoChecker interface {
+	Ping(ctx context.Context) error
+}
+
+type commandDiagnostics struct {
+	appEnv       string
+	processStart time.Time
+	mongoChecker MongoChecker
+}
+
 type clientOptions struct {
 	userRegistrar  UserRegistrar
 	groupRegistrar GroupRegistrar
+	mongoChecker   MongoChecker
+	processStart   time.Time
 }
 
 // ClientOption configures optional Telegram client dependencies.
@@ -66,6 +82,20 @@ func WithUserRegistrar(registrar UserRegistrar) ClientOption {
 func WithGroupRegistrar(registrar GroupRegistrar) ClientOption {
 	return func(opts *clientOptions) {
 		opts.groupRegistrar = registrar
+	}
+}
+
+// WithMongoChecker supplies a Mongo health checker for diagnostics.
+func WithMongoChecker(checker MongoChecker) ClientOption {
+	return func(opts *clientOptions) {
+		opts.mongoChecker = checker
+	}
+}
+
+// WithProcessStart injects the process start time for uptime calculations.
+func WithProcessStart(start time.Time) ClientOption {
+	return func(opts *clientOptions) {
+		opts.processStart = start
 	}
 }
 
@@ -91,9 +121,15 @@ func NewClient(cfg config.Config, logger *logrus.Entry, opts ...ClientOption) (*
 		}
 	}
 
+	diag := normalizeDiagnostics(commandDiagnostics{
+		appEnv:       cfg.AppEnv,
+		processStart: clientOpts.processStart,
+		mongoChecker: clientOpts.mongoChecker,
+	})
+
 	tgBot, err := createBot(cfg.TelegramToken,
 		bot.WithAllowedUpdates(defaultAllowedUpdates),
-		bot.WithDefaultHandler(defaultHandler(logger, clientOpts.userRegistrar, clientOpts.groupRegistrar, cfg.BotOwnerID)),
+		bot.WithDefaultHandler(defaultHandler(logger, clientOpts.userRegistrar, clientOpts.groupRegistrar, cfg.BotOwnerID, diag)),
 		bot.WithErrorsHandler(errorHandler(logger)),
 	)
 	if err != nil {
@@ -143,13 +179,28 @@ type messageRouter struct {
 	genericHandler  registeredHandler
 }
 
-func newMessageRouter(logger *logrus.Entry, botOwnerID int64) *messageRouter {
+func normalizeDiagnostics(diag commandDiagnostics) commandDiagnostics {
+	if strings.TrimSpace(diag.appEnv) == "" {
+		diag.appEnv = config.DefaultAppEnv
+	}
+	if diag.processStart.IsZero() {
+		diag.processStart = time.Now()
+	}
+
+	return diag
+}
+
+func newMessageRouter(logger *logrus.Entry, botOwnerID int64, diag commandDiagnostics) *messageRouter {
 	return &messageRouter{
 		logger: logger,
 		commandHandlers: map[string]registeredHandler{
 			"start": {
 				name:    "command_start",
 				handler: startCommandHandler(logger, botOwnerID),
+			},
+			"ping": {
+				name:    "command_ping",
+				handler: pingCommandHandler(logger, diag),
 			},
 		},
 		unknownHandler: registeredHandler{
@@ -208,12 +259,13 @@ func (r *messageRouter) logRoute(meta updateMeta, chatType, handlerName, route, 
 	r.logger.WithFields(fields).Info("routed update")
 }
 
-func defaultHandler(logger *logrus.Entry, userRegistrar UserRegistrar, groupRegistrar GroupRegistrar, botOwnerID int64) bot.HandlerFunc {
+func defaultHandler(logger *logrus.Entry, userRegistrar UserRegistrar, groupRegistrar GroupRegistrar, botOwnerID int64, diag commandDiagnostics) bot.HandlerFunc {
 	if logger == nil {
 		logger = logging.Logger()
 	}
 
-	router := newMessageRouter(logger, botOwnerID)
+	diag = normalizeDiagnostics(diag)
+	router := newMessageRouter(logger, botOwnerID, diag)
 
 	return func(ctx context.Context, b *bot.Bot, update *models.Update) {
 		if update == nil {
@@ -475,6 +527,110 @@ func logCommandHandled(logger *logrus.Entry, handlerName string, meta updateMeta
 	}
 
 	logger.WithFields(fields).Info("handled command")
+}
+
+func pingCommandHandler(logger *logrus.Entry, diag commandDiagnostics) bot.HandlerFunc {
+	if logger == nil {
+		logger = logging.Logger()
+	}
+	diag = normalizeDiagnostics(diag)
+
+	return func(ctx context.Context, b *bot.Bot, update *models.Update) {
+		if ctx == nil || update == nil {
+			return
+		}
+
+		meta := extractUpdateMeta(update)
+		logCommandHandled(logger, "command_ping", meta)
+
+		if meta.chatID == 0 {
+			logger.WithFields(logging.Fields{
+				"event":     "command_ping_send_failed",
+				"user_id":   meta.userID,
+				"chat_id":   meta.chatID,
+				"chat_type": normalizeChatType(meta.chatType),
+			}).Error("cannot send ping response without chat_id")
+			return
+		}
+
+		mongoStatus := "error"
+		if diag.mongoChecker != nil {
+			mongoCtx, cancel := context.WithTimeout(ctx, pingMongoTimeout)
+			defer cancel()
+
+			if err := diag.mongoChecker.Ping(mongoCtx); err != nil {
+				logger.WithFields(logging.Fields{
+					"event":     "command_ping_mongo_error",
+					"user_id":   meta.userID,
+					"chat_id":   meta.chatID,
+					"chat_type": normalizeChatType(meta.chatType),
+				}).WithError(err).Error("mongo ping failed during /ping")
+			} else {
+				mongoStatus = "ok"
+			}
+		}
+
+		messageText := pingMessage(diag.appEnv, time.Since(diag.processStart), mongoStatus)
+
+		if b == nil {
+			logger.WithFields(logging.Fields{
+				"event":     "command_ping_send_failed",
+				"user_id":   meta.userID,
+				"chat_id":   meta.chatID,
+				"chat_type": normalizeChatType(meta.chatType),
+				"mongo":     mongoStatus,
+			}).Error("cannot send ping response without telegram client")
+			return
+		}
+
+		if _, err := sendMessage(ctx, b, &bot.SendMessageParams{
+			ChatID: meta.chatID,
+			Text:   messageText,
+		}); err != nil {
+			logger.WithFields(logging.Fields{
+				"event":     "command_ping_send_failed",
+				"user_id":   meta.userID,
+				"chat_id":   meta.chatID,
+				"chat_type": normalizeChatType(meta.chatType),
+				"mongo":     mongoStatus,
+			}).WithError(err).Error("failed to send ping response")
+			return
+		}
+
+		logger.WithFields(logging.Fields{
+			"event":     "command_ping_sent",
+			"user_id":   meta.userID,
+			"chat_id":   meta.chatID,
+			"chat_type": normalizeChatType(meta.chatType),
+			"mongo":     mongoStatus,
+		}).Info("sent ping response")
+	}
+}
+
+func pingMessage(appEnv string, uptime time.Duration, mongoStatus string) string {
+	env := strings.TrimSpace(appEnv)
+	if env == "" {
+		env = config.DefaultAppEnv
+	}
+
+	if uptime < 0 {
+		uptime = 0
+	}
+	uptime = uptime.Truncate(time.Second)
+
+	mongo := strings.TrimSpace(mongoStatus)
+	if mongo == "" {
+		mongo = "error"
+	}
+
+	lines := []string{
+		"pong",
+		fmt.Sprintf("env: %s", env),
+		fmt.Sprintf("uptime: %s", uptime),
+		fmt.Sprintf("mongo: %s", mongo),
+	}
+
+	return strings.Join(lines, "\n")
 }
 
 func startCommandHandler(logger *logrus.Entry, botOwnerID int64) bot.HandlerFunc {

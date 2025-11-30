@@ -97,6 +97,23 @@ func (m *Manager) Groups() *mongo.Collection {
 	return m.Collection(CollectionGroups)
 }
 
+// Ping verifies Mongo connectivity. It returns an error when the manager or
+// context are invalid, or when the ping fails.
+func (m *Manager) Ping(ctx context.Context) error {
+	if ctx == nil {
+		return errors.New("context is required")
+	}
+	if m == nil || m.client == nil {
+		return errors.New("store manager is not initialized")
+	}
+
+	if err := m.client.Ping(ctx, readpref.Primary()); err != nil {
+		return fmt.Errorf("ping mongo: %w", err)
+	}
+
+	return nil
+}
+
 // EnsureBaseIndexes creates the foundational indexes for the users and groups
 // collections. Collections are created implicitly if they do not already exist.
 func (m *Manager) EnsureBaseIndexes(ctx context.Context) error {

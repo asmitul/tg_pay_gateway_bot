@@ -41,6 +41,10 @@
 - `internal/feature/group.Registrar` upserts groups when the bot sees activity in a group/supergroup chat, setting `joined_at`/`last_seen_at` plus the trimmed chat title on first sight and refreshing `last_seen_at` (and title when provided) on subsequent interactions.
 - The Telegram default handler invokes the registrar for updates in group/supergroup chats; failures log `event=group_registration_failed` with chat context while routing continues.
 
+## Diagnostics
+- `store.Manager` exposes `Ping(ctx)` to verify Mongo connectivity and wraps failures for caller-friendly errors.
+- `/ping` command replies with `pong`, `env`, `uptime` (derived from process start time), and `mongo: ok|error`; Mongo ping uses a 2s timeout and logs failures but still responds to the user.
+
 ## Local Development Stack
 - `docker-compose.local.yml` provides MongoDB 6.0 for development (no auth, bound to 0.0.0.0:27017) with a persistent `mongo_data` volume.
 - Default database `tg_bot_dev` is set via `MONGO_INITDB_DATABASE`; production deployments must enable credentials and use `tg_bot` (pattern `tg_bot_{APP_ENV}` is acceptable).
