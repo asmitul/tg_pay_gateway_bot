@@ -68,6 +68,7 @@
 ## CI/CD
 - GitHub Actions `ci.yml` enforces `go fmt ./...`, `go test ./...`, and `go build ./cmd/bot` on pushes/PRs to `main` with module caching and test log artifacts.
 - GitHub Actions `release.yml` (push to `main` or manual dispatch) logs into GHCR using `GITHUB_TOKEN`, builds/pushes Docker images tagged with the commit SHA and `latest` under `ghcr.io/<repo_owner>/tg-pay-gateway-bot`, and publishes commit/image tags plus the image digest as outputs for downstream deploys.
+- GitHub Actions `production-deploy.yml` builds/pushes the root Dockerfile image to GHCR under `ghcr.io/${github.repository}` on `main` (or manual dispatch) with metadata tags (branch/PR/sha/latest) and deploys to a VPS via `appleboy/ssh-action` by pulling the `:main` tag, stopping/renaming the prior container for rollback, running the new container with `APP_ENV=production`, `TELEGRAM_TOKEN`, `BOT_OWNER`, `MONGO_URI`, `MONGO_DB` (defaults from repo var or the repository name), and optional `LOG_LEVEL`, then verifies the container is running; requires `VPS_HOST`/`VPS_USER`/`VPS_PORT`/`SSH_KEY` secrets plus runtime secrets for bot configuration.
 - Branch protection policy for `main`: require `CI / build-test` status check, require branches up to date, minimum one approving review (stale approvals dismissed on new commits), enforce admins, and disallow force pushes and branch deletion (see `memory-bank/branch-protection.md` for application steps).
 
 ## Database Schema
