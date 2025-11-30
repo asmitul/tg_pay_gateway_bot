@@ -69,6 +69,7 @@
 ## CI/CD
 - GitHub Actions `ci.yml` enforces `go fmt ./...`, `go test ./...`, and `go build ./cmd/bot` on pushes/PRs to `main` with module caching and test log artifacts.
 - GitHub Actions `release.yml` (push to `main` or manual dispatch) logs into GHCR using `GITHUB_TOKEN`, builds/pushes Docker images tagged with the commit SHA and `latest` under `ghcr.io/<repo_owner>/tg-pay-gateway-bot`, and publishes commit/image tags plus the image digest as outputs for downstream deploys.
+- Branch protection policy for `main`: require `CI / build-test` status check, require branches up to date, minimum one approving review (stale approvals dismissed on new commits), enforce admins, and disallow force pushes and branch deletion (see `memory-bank/branch-protection.md` for application steps).
 
 ## Database Schema
 - Base collections created for the bot skeleton:
