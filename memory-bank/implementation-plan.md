@@ -566,4 +566,74 @@ Perform a manual checklist to validate all base-bot behaviors:
 
 ---
 
-Once all the steps and tests in this plan are complete and stable, the base bot is ready. Future iterations can then layer on the more complex features from the design document (payment integration, daily billing push, up-stream interfaces, scheduling, etc.) without altering the core skeleton. 
+Once all the steps and tests in this plan are complete and stable, the base bot is ready. Future iterations can then layer on the more complex features from the design document (payment integration, daily billing push, up-stream interfaces, scheduling, etc.) without altering the core skeleton.
+
+---
+
+## Phase 8 – CI/CD Automation with GitHub Actions
+
+### Step 27 – Add a CI workflow for build + test
+
+Create `.github/workflows/ci.yml` to enforce code quality on every pull request and main-branch push:
+
+* Triggers: `pull_request` to `main` and `push` to `main`.
+* Jobs run on `ubuntu-latest` with Go 1.25.
+* Steps:
+
+  * Check out the repository.
+  * Set up Go 1.25.
+  * Cache module downloads (`~/go/pkg/mod`) keyed by `go.sum`.
+  * Run `go fmt ./...` and fail if formatting changes are needed.
+  * Run `go test ./...` with race detector disabled (can be added later once dependencies are stable).
+  * Build the bot binary (`go build ./cmd/bot`) to ensure build-time issues are surfaced.
+  * Upload test results/logs as workflow artifacts for debugging failed runs.
+
+**Test**
+
+* Open a pull request with a deliberate formatting error.
+
+  * Expected: CI fails on the `go fmt` step with a clear message.
+* Push a change that breaks a unit test.
+
+  * Expected: CI fails on the `go test` step and surfaces the failing test output in the logs and uploaded artifact.
+
+---
+
+### Step 28 – Add a release/CD workflow
+
+Create `.github/workflows/release.yml` to produce deployable images when changes land on `main`:
+
+* Triggers: `push` to `main` and manual `workflow_dispatch` for hotfix releases.
+* Steps:
+
+  * Check out the repository and set up Go 1.25.
+  * Build and tag a container image (e.g., `tg-pay-gateway-bot:${{ github.sha }}`) using the existing Dockerfile.
+  * Log in to the target registry via `REGISTRY`, `REGISTRY_USERNAME`, and `REGISTRY_PASSWORD` secrets.
+  * Push the image tag and optionally a rolling `latest` tag.
+  * Publish the commit SHA and image tag as workflow outputs for downstream deployment jobs.
+
+**Test**
+
+* Run the workflow via `workflow_dispatch` with registry secrets configured.
+
+  * Expected: the image builds successfully, authenticates to the registry, and both SHA and `latest` tags are pushed.
+* Verify that a deployment environment can pull the pushed image using the emitted tag.
+
+---
+
+### Step 29 – Protect main with required checks
+
+Enforce branch protection so that `main` cannot be merged unless CI passes:
+
+* Require the CI workflow from Step 27 to pass before merging.
+* Require at least one code review approval for pull requests.
+* Enable status checks that prevent force-pushes and require up-to-date branches.
+
+**Test**
+
+* Attempt to merge a pull request with failing CI.
+
+  * Expected: GitHub blocks the merge and surfaces the failing check.
+* Attempt to merge without a review approval (if repository policy requires one).
+
+  * Expected: GitHub blocks the merge until approval is granted and CI is green.
