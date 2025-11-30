@@ -59,6 +59,12 @@
 - `docker-compose.local.yml` provides MongoDB 6.0 for development (no auth, bound to 0.0.0.0:27017) with a persistent `mongo_data` volume.
 - Default database `tg_bot_dev` is set via `MONGO_INITDB_DATABASE`; production deployments must enable credentials and use `tg_bot` (pattern `tg_bot_{APP_ENV}` is acceptable).
 
+## Containerization
+- Multi-stage Dockerfile builds the bot from `golang:1.25-alpine` with `CGO_ENABLED=0` and `-trimpath -ldflags "-s -w"` producing a static `bot` binary before copying into a `gcr.io/distroless/static-debian12` runtime.
+- Runtime runs as `nonroot:nonroot`, exposes port 8080 for `/healthz`, and relies on the same env vars (`TELEGRAM_TOKEN`, `BOT_OWNER`, `MONGO_URI`, `MONGO_DB`, `HTTP_PORT`, `APP_ENV`, `LOG_LEVEL`) for configuration.
+- `.dockerignore` trims docs/editor/test artifacts from the build context to keep rebuilds and image layers small.
+- Local build/verify example: `docker build -t tg-pay-gateway-bot:local .` then `docker run --rm -e TELEGRAM_TOKEN=dummy -e BOT_OWNER=1 -e MONGO_URI=mongodb://localhost:27017 -e MONGO_DB=tg_bot_dev tg-pay-gateway-bot:local -config-only`.
+
 ## Database Schema
 - Base collections created for the bot skeleton:
   - `users`: fields `user_id` (unique), `role`, `created_at`, `updated_at`, `last_seen_at` (updated for each user interaction).

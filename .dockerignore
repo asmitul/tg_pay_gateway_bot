@@ -1,0 +1,13 @@
+.git
+.gitignore
+.idea/
+.vscode/
+memory-bank/
+tmp/
+testdata/
+bin/
+build/
+dist/
+coverage.out
+*.log
+docker-compose*.yml

@@ -1,4 +1,5 @@
 ## 2025-11-30
+- Completed Implementation Plan Step 24: added a multi-stage Dockerfile (Go 1.25 alpine builder -> distroless runtime, non-root user, port 8080 exposed), trimmed the build context with `.dockerignore`, built image `tg-pay-gateway-bot:local`, and verified `docker run ... -config-only` with dummy env vars; `go test ./...` still passing.
 - Completed Implementation Plan Step 23: added HTTP `/healthz` endpoint on `HTTP_PORT` returning `{"status":"ok"}` or `{"status":"degraded","mongo":"error"}` based on a 2s Mongo ping, wired the health server into main with graceful shutdown, and added unit tests; `go test ./...` passing.
 - Completed Implementation Plan Step 22: implemented graceful shutdown with signal-aware polling stop, a 10s Telegram shutdown wait, Mongo disconnect timeout, and a final shutdown completion log; `go test ./...` passing.
 - Completed Implementation Plan Step 21: added structured per-update logging with Telegram timestamps, handler names, chat/user IDs, and update types, wiring handler selection into the update log; updated metadata extraction helpers and tests; `go test ./...` passing.
