@@ -18,6 +18,5 @@ WORKDIR /app
 COPY --from=builder /bin/bot /app/bot
 
 USER nonroot:nonroot
-EXPOSE 8080
 
 ENTRYPOINT ["/app/bot"]

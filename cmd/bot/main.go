@@ -14,7 +14,6 @@ import (
 	"tg_pay_gateway_bot/internal/feature/group"
 	"tg_pay_gateway_bot/internal/feature/owner"
 	"tg_pay_gateway_bot/internal/feature/user"
-	"tg_pay_gateway_bot/internal/health"
 	"tg_pay_gateway_bot/internal/logging"
 	"tg_pay_gateway_bot/internal/store"
 	"tg_pay_gateway_bot/internal/telegram"
@@ -26,7 +25,6 @@ const (
 	mongoDisconnectTimeout  = 5 * time.Second
 	ownerBootstrapTimeout   = 5 * time.Second
 	telegramShutdownTimeout = 10 * time.Second
-	healthShutdownTimeout   = 5 * time.Second
 )
 
 var processStart = time.Now()
@@ -114,15 +112,6 @@ func main() {
 
 	logger.WithField("event", "telegram_ready").Info("telegram client initialized")
 
-	healthServer := health.NewServer(cfg.HTTPPort, mongoManager, logger)
-	healthErrCh := make(chan error, 1)
-
-	go func() {
-		if err := healthServer.ListenAndServe(); err != nil {
-			healthErrCh <- err
-		}
-	}()
-
 	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -139,8 +128,6 @@ func main() {
 		logger.WithField("event", "shutdown_signal").Info("received termination signal, stopping telegram polling")
 	case <-tgDone:
 		logger.WithField("event", "telegram_stopped_early").Warn("telegram client stopped before shutdown signal")
-	case err := <-healthErrCh:
-		logger.WithError(err).Error("health server error; initiating shutdown")
 	}
 
 	cancelTelegram()
@@ -152,14 +139,6 @@ func main() {
 		logger.WithField("event", "telegram_shutdown_timeout").Warn("timed out waiting for telegram client to stop")
 	}
 	cancelWait()
-
-	healthCtx, cancelHealth := context.WithTimeout(context.Background(), healthShutdownTimeout)
-	if err := healthServer.Shutdown(healthCtx); err != nil {
-		logger.WithError(err).Warn("health server shutdown error")
-	} else {
-		logger.WithField("event", "health_shutdown").Info("health server stopped")
-	}
-	cancelHealth()
 
 	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), mongoDisconnectTimeout)
 	if err := mongoManager.Close(shutdownCtx); err != nil {

@@ -80,7 +80,6 @@ Define and document the canonical environment variables (authoritative list live
 | MONGO_DB        | tg_bot / tg_bot_dev            | Yes      | DB name; prod=`tg_bot`, dev=`tg_bot_dev`             |
 | APP_ENV         | development / production       | No       | Default `production`; controls logging format, .env  |
 | LOG_LEVEL       | info                           | No       | Overrides default log level                          |
-| HTTP_PORT       | 8080                           | No       | HTTP health endpoint port; default 8080              |
 
 `.env` loading is allowed **only** when `APP_ENV=development` (use dotenv); production must rely on environment variables.
 
@@ -477,32 +476,9 @@ Ensure the bot can shut down cleanly when it receives a termination signal:
 
 ---
 
-### Step 23 – Add a minimal healthcheck for container environments
+### Step 23 – Removed
 
-Expose an HTTP health endpoint:
-
-* `GET /healthz` served on `HTTP_PORT` (default 8080; overridable by env)
-* Success: `{"status":"ok"}`
-* Mongo offline: `{"status":"degraded","mongo":"error"}` (HTTP 200 is acceptable; 503 optional if infrastructure requires restarts)
-
-Docker healthcheck example:
-
-```yaml
-healthcheck:
-  test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
-  interval: 10s
-  timeout: 2s
-  retries: 3
-```
-
-**Test**
-
-* Start the bot and curl `/healthz`.
-
-  * Expected: `{"status":"ok"}` with HTTP 200.
-* Stop Mongo or break the Telegram token.
-
-  * Expected: `{"status":"degraded","mongo":"error"}` (HTTP 200 or 503) and logs a clear reason.
+The previously planned HTTP healthcheck endpoint was removed; container readiness now relies on MongoDB’s own healthcheck and the bot’s startup logs rather than an exposed HTTP probe.
 
 ---
 

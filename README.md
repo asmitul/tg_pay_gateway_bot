@@ -8,7 +8,7 @@ This iteration delivers the base bot only — no payment channels, billing flows
 - Initialize structured logging suitable for development and production.
 - Connect to MongoDB and manage client lifecycle.
 - Run a Telegram client with basic command routing and registration hooks.
-- Provide minimal commands for health and onboarding; payments will be added in future phases.
+- Provide minimal commands for onboarding and diagnostics; payments will be added in future phases.
 
 ## Configuration
 Environment keys and defaults are defined centrally in `internal/config/config.go` (`Contract` is the authoritative list).

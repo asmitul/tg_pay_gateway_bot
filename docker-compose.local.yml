@@ -34,9 +34,6 @@ services:
       BOT_OWNER: ${BOT_OWNER:?BOT_OWNER is required}
       MONGO_URI: mongodb://mongo:27017
       MONGO_DB: tg_bot_dev
-      HTTP_PORT: 8080
-    ports:
-      - "8080:8080"
 
 volumes:
   mongo_data:

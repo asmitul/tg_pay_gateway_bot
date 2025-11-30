@@ -9,7 +9,6 @@ import (
 
 func TestLoadDefaultsAndRequired(t *testing.T) {
 	unsetEnv(t, KeyAppEnv)
-	unsetEnv(t, KeyHTTPPort)
 	unsetEnv(t, KeyLogLevel)
 
 	t.Setenv(KeyTelegramToken, "token")
@@ -28,10 +27,6 @@ func TestLoadDefaultsAndRequired(t *testing.T) {
 
 	if cfg.BotOwnerID != 12345 {
 		t.Fatalf("expected bot owner id to be parsed, got %d", cfg.BotOwnerID)
-	}
-
-	if cfg.HTTPPort != DefaultHTTPPort {
-		t.Fatalf("expected default http port %d, got %d", DefaultHTTPPort, cfg.HTTPPort)
 	}
 
 	if cfg.LogLevel != DefaultLogLevel {
@@ -75,25 +70,6 @@ func TestLoadValidatesOwnerID(t *testing.T) {
 	}
 }
 
-func TestLoadValidatesHTTPPort(t *testing.T) {
-	unsetEnv(t, KeyAppEnv)
-
-	t.Setenv(KeyTelegramToken, "token")
-	t.Setenv(KeyBotOwner, "123")
-	t.Setenv(KeyMongoURI, "mongodb://localhost:27017")
-	t.Setenv(KeyMongoDB, "tg_bot")
-	t.Setenv(KeyHTTPPort, "-1")
-
-	_, err := Load()
-	if err == nil {
-		t.Fatalf("expected error for invalid %s", KeyHTTPPort)
-	}
-
-	if !strings.Contains(err.Error(), KeyHTTPPort) {
-		t.Fatalf("expected error to mention %s, got %v", KeyHTTPPort, err)
-	}
-}
-
 func TestLoadUsesDotEnvInDevelopment(t *testing.T) {
 	tmpDir := t.TempDir()
 	dotenvContent := []byte(`
@@ -102,7 +78,6 @@ TELEGRAM_TOKEN=dotenv-token
 BOT_OWNER=77
 MONGO_URI=mongodb://from-dotenv
 MONGO_DB=tg_bot_dev
-HTTP_PORT=9091
 LOG_LEVEL=debug
 `)
 
@@ -128,7 +103,6 @@ LOG_LEVEL=debug
 	unsetEnv(t, KeyBotOwner)
 	unsetEnv(t, KeyMongoURI)
 	unsetEnv(t, KeyMongoDB)
-	unsetEnv(t, KeyHTTPPort)
 	unsetEnv(t, KeyLogLevel)
 
 	cfg, err := Load()
@@ -154,10 +128,6 @@ LOG_LEVEL=debug
 
 	if cfg.MongoDB != "tg_bot_dev" {
 		t.Fatalf("expected mongo db from dotenv, got %s", cfg.MongoDB)
-	}
-
-	if cfg.HTTPPort != 9091 {
-		t.Fatalf("expected http port from dotenv, got %d", cfg.HTTPPort)
 	}
 
 	if cfg.LogLevel != "debug" {
@@ -191,7 +161,6 @@ func TestFormatRedactedMasksSecrets(t *testing.T) {
 		MongoDB:       "tg_bot",
 		AppEnv:        EnvDevelopment,
 		LogLevel:      "debug",
-		HTTPPort:      9000,
 	}
 
 	summary := FormatRedacted(cfg)

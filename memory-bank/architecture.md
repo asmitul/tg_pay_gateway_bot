@@ -11,7 +11,7 @@
 - `tmp.md`: Scratchpad file (no contract; safe to ignore for architecture).
 
 ## Runtime Configuration
-- Config loader implemented (Implementation Plan Step 5): resolves APP_ENV (default production), loads .env only in development, validates required TELEGRAM_TOKEN/BOT_OWNER/MONGO_URI/MONGO_DB and parses BOT_OWNER/HTTP_PORT; defaults LOG_LEVEL and HTTP_PORT when unset.
+- Config loader implemented (Implementation Plan Step 5): resolves APP_ENV (default production), loads .env only in development, validates required TELEGRAM_TOKEN/BOT_OWNER/MONGO_URI/MONGO_DB and parses BOT_OWNER; defaults LOG_LEVEL when unset.
 - Configuration dry-run supported via `-config-only` flag: loads config, validates Mongo URI scheme/host, prints a redacted summary (hiding token/credentials), then exits without starting the bot.
 - Structured logging initialized (Implementation Plan Step 7): global logrus logger with JSON format in production and text in development, default fields `service=telegram-bot` and `env`, key names `ts/level/msg`, and helpers for info/warn/error plus contextual `user_id/chat_id/event` fields.
 
@@ -49,7 +49,6 @@
 ## Diagnostics
 - `store.Manager` exposes `Ping(ctx)` to verify Mongo connectivity and wraps failures for caller-friendly errors.
 - `/ping` command replies with `pong`, `env`, `uptime` (derived from process start time), and `mongo: ok|error`; Mongo ping uses a 2s timeout and logs failures but still responds to the user.
-- HTTP health endpoint `/healthz` served on `HTTP_PORT` (default 8080) returns `{"status":"ok"}` when Mongo ping succeeds and `{"status":"degraded","mongo":"error"}` when Mongo is unreachable or the checker is missing; Mongo health ping uses a 2s timeout and the server shuts down gracefully with the process.
 
 ## Permissions & Admin Commands
 - Owner-only commands validate the Mongo-backed user role and require the `BOT_OWNER` id; unauthorized users receive a short “permission denied” reply with audit logs.
@@ -57,12 +56,12 @@
 
 ## Local Development Stack
 - `docker-compose.local.yml` provides MongoDB 6.0 for development (no auth, bound to 0.0.0.0:27017) with a persistent `mongo_data` volume.
-- Docker Compose now includes a `bot` service built from the local Dockerfile (`tg-pay-gateway-bot:local`) that runs with `APP_ENV=development`, depends on the Mongo healthcheck, maps port 8080 for `/healthz`, and uses the service DNS (`mongodb://mongo:27017`) plus env-injected `TELEGRAM_TOKEN` and `BOT_OWNER`.
+- Docker Compose includes a `bot` service built from the local Dockerfile (`tg-pay-gateway-bot:local`) that runs with `APP_ENV=development`, depends on the Mongo healthcheck, and uses the service DNS (`mongodb://mongo:27017`) plus env-injected `TELEGRAM_TOKEN` and `BOT_OWNER`.
 - Default database `tg_bot_dev` is set via `MONGO_INITDB_DATABASE`; production deployments must enable credentials and use `tg_bot` (pattern `tg_bot_{APP_ENV}` is acceptable).
 
 ## Containerization
 - Multi-stage Dockerfile builds the bot from `golang:1.25-alpine` with `CGO_ENABLED=0` and `-trimpath -ldflags "-s -w"` producing a static `bot` binary before copying into a `gcr.io/distroless/static-debian12` runtime.
-- Runtime runs as `nonroot:nonroot`, exposes port 8080 for `/healthz`, and relies on the same env vars (`TELEGRAM_TOKEN`, `BOT_OWNER`, `MONGO_URI`, `MONGO_DB`, `HTTP_PORT`, `APP_ENV`, `LOG_LEVEL`) for configuration.
+- Runtime runs as `nonroot:nonroot` and relies on the env vars (`TELEGRAM_TOKEN`, `BOT_OWNER`, `MONGO_URI`, `MONGO_DB`, `APP_ENV`, `LOG_LEVEL`) for configuration.
 - `.dockerignore` trims docs/editor/test artifacts from the build context to keep rebuilds and image layers small.
 - Local build/verify example: `docker build -t tg-pay-gateway-bot:local .` then `docker run --rm -e TELEGRAM_TOKEN=dummy -e BOT_OWNER=1 -e MONGO_URI=mongodb://localhost:27017 -e MONGO_DB=tg_bot_dev tg-pay-gateway-bot:local -config-only`.
 

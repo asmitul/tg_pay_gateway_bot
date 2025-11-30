@@ -20,7 +20,6 @@ const (
 	KeyMongoDB       = "MONGO_DB"
 	KeyAppEnv        = "APP_ENV"
 	KeyLogLevel      = "LOG_LEVEL"
-	KeyHTTPPort      = "HTTP_PORT"
 
 	// Allowed environment values.
 	EnvDevelopment = "development"
@@ -29,7 +28,6 @@ const (
 	// Defaults for optional settings.
 	DefaultAppEnv   = EnvProduction
 	DefaultLogLevel = "info"
-	DefaultHTTPPort = 8080
 
 	// Recommended database names by environment.
 	DefaultMongoDBProd = "tg_bot"
@@ -88,12 +86,6 @@ var Contract = []VarSpec{
 		Default:     DefaultLogLevel,
 		Description: "Overrides default log level.",
 	},
-	{
-		Key:         KeyHTTPPort,
-		Example:     strconv.Itoa(DefaultHTTPPort),
-		Default:     strconv.Itoa(DefaultHTTPPort),
-		Description: "HTTP health/diagnostics port.",
-	},
 }
 
 // Config mirrors resolved configuration values after loading.
@@ -104,7 +96,6 @@ type Config struct {
 	MongoDB       string
 	AppEnv        string
 	LogLevel      string
-	HTTPPort      int
 }
 
 // Load resolves configuration from the environment (with optional dotenv in development).
@@ -124,7 +115,6 @@ func Load() (Config, error) {
 		MongoURI:      strings.TrimSpace(os.Getenv(KeyMongoURI)),
 		MongoDB:       strings.TrimSpace(os.Getenv(KeyMongoDB)),
 		LogLevel:      firstNonEmpty(strings.TrimSpace(os.Getenv(KeyLogLevel)), DefaultLogLevel),
-		HTTPPort:      DefaultHTTPPort,
 	}
 
 	if err := validateAppEnv(cfg.AppEnv); err != nil {
@@ -162,18 +152,6 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("missing required environment variable(s): %s", strings.Join(missing, ", "))
 	}
 
-	httpPortRaw := strings.TrimSpace(os.Getenv(KeyHTTPPort))
-	if httpPortRaw != "" {
-		port, parseErr := strconv.Atoi(httpPortRaw)
-		if parseErr != nil {
-			return Config{}, fmt.Errorf("invalid %s: %w", KeyHTTPPort, parseErr)
-		}
-		if port <= 0 {
-			return Config{}, fmt.Errorf("%s must be greater than 0", KeyHTTPPort)
-		}
-		cfg.HTTPPort = port
-	}
-
 	return cfg, nil
 }
 
@@ -192,7 +170,6 @@ func FormatRedacted(cfg Config) string {
 		"mongo_uri: " + redactMongoURI(cfg.MongoURI),
 		"mongo_db: " + cfg.MongoDB,
 		"log_level: " + cfg.LogLevel,
-		fmt.Sprintf("http_port: %d", cfg.HTTPPort),
 	}
 
 	return strings.Join(lines, "\n")
