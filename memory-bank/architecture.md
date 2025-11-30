@@ -57,6 +57,7 @@
 
 ## Local Development Stack
 - `docker-compose.local.yml` provides MongoDB 6.0 for development (no auth, bound to 0.0.0.0:27017) with a persistent `mongo_data` volume.
+- Docker Compose now includes a `bot` service built from the local Dockerfile (`tg-pay-gateway-bot:local`) that runs with `APP_ENV=development`, depends on the Mongo healthcheck, maps port 8080 for `/healthz`, and uses the service DNS (`mongodb://mongo:27017`) plus env-injected `TELEGRAM_TOKEN` and `BOT_OWNER`.
 - Default database `tg_bot_dev` is set via `MONGO_INITDB_DATABASE`; production deployments must enable credentials and use `tg_bot` (pattern `tg_bot_{APP_ENV}` is acceptable).
 
 ## Containerization
